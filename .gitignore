@@ -1,0 +1,17 @@
+# Xcode
+*.xcodeproj
+*.xcworkspace
+xcuserdata/
+DerivedData/
+build/
+*.ipa
+*.dSYM.zip
+
+# XcodeGen 生成物（由 project.yml 随时重建）
+LocalAI.xcodeproj/
+
+# macOS
+.DS_Store
+
+# 运行时产物（不应入库）
+*.gguf

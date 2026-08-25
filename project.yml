@@ -1,0 +1,46 @@
+name: LocalAI
+options:
+  bundleIdPrefix: com.localai
+  deploymentTarget:
+    iOS: "27.0"
+  createIntermediateGroups: true
+
+packages:
+  LLM:
+    url: https://github.com/eastriverlee/LLM.swift
+    from: 3.0.0
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    TARGETED_DEVICE_FAMILY: "1,2"
+
+targets:
+  LocalAI:
+    type: application
+    platform: iOS
+    sources:
+      - LocalAI
+    dependencies:
+      - package: LLM
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: com.localai.app
+        MARKETING_VERSION: 1.0.0
+        CURRENT_PROJECT_VERSION: 1
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
+        # llama.cpp 为 C++ 源码，宿主 App 必须开启 Swift/C++ 互操作
+        SWIFT_OBJC_INTEROP_MODE: objcxx
+
+schemes:
+  LocalAI:
+    build:
+      targets:
+        LocalAI: all
+    run:
+      config: Debug
+    archive:
+      config: Release
