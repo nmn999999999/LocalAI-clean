@@ -20,6 +20,27 @@ final class AgentService: ObservableObject {
     @Published private(set) var isRunning = false
 
     static let maxIterations = 6
+    /// 格式错误重试上限（防止小模型反复输出坏 JSON 烧光迭代数）
+    static let maxRetries = 2
+
+    /// Agent 循环结束「暗号」：模型给出最终回答前必须先输出它，
+    /// 循环据此判定"模型已收集够信息，可以结束"。
+    static let endSignal = "[[FINAL_ANSWER]]"
+
+    /// 检测暗号并提取最终回答。返回 nil 表示输出中没有暗号。
+    /// 兼容暗号在前（`暗号+正文`）与在后（`正文+暗号`）两种写法。
+    static func extractFinalAnswer(from text: String) -> String? {
+        guard text.range(of: endSignal, options: [.caseInsensitive]) != nil else { return nil }
+        let cleaned = text
+            .replacingOccurrences(
+                of: endSignal, with: "\n",
+                options: [.caseInsensitive]
+            )
+            .replacingOccurrences(of: "```", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        // 只输出了暗号没有正文：交给上层兜底
+        return cleaned.isEmpty ? nil : cleaned
+    }
 
     /// 在对话中执行 Agent 循环，返回最终 assistant 消息内容与全部工具调用记录。
     func run(
@@ -35,6 +56,7 @@ final class AgentService: ObservableObject {
 
         var workingHistory = history
         var allToolCalls: [ChatMessage.ToolCall] = []
+        var retryCount = 0
 
         for _ in 0..<Self.maxIterations {
             guard !Task.isCancelled else { break }
@@ -45,10 +67,18 @@ final class AgentService: ObservableObject {
             do {
                 raw = try await llm.complete(messages: promptMessages, settings: settings)
             } catch {
-                appendStep(.finalAnswer, "生成失败: \(error.localizedDescription)")
-                break
+                let msg = "生成失败: \(error.localizedDescription)"
+                appendStep(.finalAnswer, msg)
+                return (msg, allToolCalls)
             }
 
+            // 1) 结束暗号优先：模型已明确表示"信息足够，给出最终回答"，立即终止循环
+            if let answer = Self.extractFinalAnswer(from: raw) {
+                appendStep(.finalAnswer, "检测到结束暗号，输出最终回答")
+                return (answer, allToolCalls)
+            }
+
+            // 2) 有效的工具调用：执行并把结果回填上下文，进入下一轮
             if let call = Self.parseToolCall(from: raw) {
                 let argsJSON = Self.compactJSON(call.arguments)
                 appendStep(.thinking, "调用工具 \(call.name)(\(argsJSON))")
@@ -73,19 +103,24 @@ final class AgentService: ObservableObject {
                     ChatMessage(role: .tool, content: "[\(call.name) 结果]\n\(limited)")
                 )
             } else {
-                // 结尾检测：模型是想调用工具但格式不对（重试），还是真的在给最终回答（结束）？
-                if Self.looksLikeToolCall(raw, tools: toolsEnabledTools) {
-                    appendStep(.executing, "工具调用格式无效，提示模型重试")
+                // 3) 无暗号、无有效工具调用：大概率是模型忘了暗号直接给了回答。
+                //    只有明显"想调工具但格式坏了"才有限重试，其余一律按最终回答结束循环。
+                if retryCount < Self.maxRetries,
+                   Self.looksLikeToolCall(raw, tools: toolsEnabledTools),
+                   Self.looksLikeBrokenJSON(raw) {
+                    retryCount += 1
+                    appendStep(.executing, "工具调用格式无效，提示模型重试（\(retryCount)/\(Self.maxRetries)）")
                     workingHistory.append(ChatMessage(role: .assistant, content: raw))
                     workingHistory.append(ChatMessage(role: .tool, content: """
                     你的输出不是有效的工具调用 JSON。规则：
                     - 需要调用工具时，只输出一个 JSON 对象（不要其他文字）：{"name": "<工具名>", "arguments": {...}}
-                    - 已经掌握足够信息时，直接给出最终回答（正常中文），不要输出 JSON。
+                    - 已经掌握足够信息时，先输出结束暗号 \(Self.endSignal)，然后输出最终回答（正常中文）。
                     请重新输出。
                     """))
                     continue
                 }
-                appendStep(.finalAnswer, raw)
+                // 兜底：没有暗号也视为最终回答，保证循环总能带着真实回答退出
+                appendStep(.finalAnswer, "未检测到结束暗号，按最终回答处理")
                 return (raw, allToolCalls)
             }
         }
@@ -130,11 +165,18 @@ final class AgentService: ObservableObject {
         ## 调用规则
         1. 一次最多调用一个工具；参数名必须与工具定义完全一致。
         2. 数字参数直接写数值（如 5、3.14）；布尔写 true/false；其余一律写字符串。
-        3. 需要查数据/算数/操作时才调用工具；否则直接用中文回答。
+        3. 需要查数据/算数/操作时才调用工具；否则直接结束（见下方结束暗号）。
 
         ## 多轮思考与执行
-        你可以连续进行多轮：每轮调用一个工具 → 观察返回的工具结果 → 再决定调用下一个工具或给出最终回答。
-        当你已经收集到足够信息时，直接输出最终回答（正常中文），不要再输出 JSON。
+        你可以连续进行多轮：每轮调用一个工具 → 观察返回的工具结果 → 再决定调用下一个工具或结束。
+
+        ## 结束暗号（重要！）
+        当你已经收集到足够信息、准备给出最终回答时，必须先输出结束暗号：
+
+        \(Self.endSignal)
+
+        然后紧接着输出最终回答正文（正常中文）。
+        暗号是循环结束的唯一信号：不输出暗号、又不输出合法工具 JSON，会被视为无效输出。
 
         ## 工具列表
         \(catalog)
@@ -193,10 +235,14 @@ final class AgentService: ObservableObject {
     /// 用于区分「工具调用格式错误（重试）」与「最终回答（结束）」。
     private static func looksLikeToolCall(_ text: String, tools: [AgentToolDefinition]) -> Bool {
         let lower = text.lowercased()
-        if lower.contains("\"name\"") || lower.contains("\"arguments\"") || lower.contains("调用工具") {
-            return true
-        }
+        if lower.contains("\"name\"") || lower.contains("\"arguments\"") { return true }
         return tools.contains { text.contains($0.name) }
+    }
+
+    /// 输出里确实有 JSON 花括号结构（而非普通文本里恰好提到工具名），
+    /// 才值得让模型重试；否则直接按最终回答结束。
+    private static func looksLikeBrokenJSON(_ text: String) -> Bool {
+        text.contains("{") && text.contains("}")
     }
 
     /// 截断过长的工具结果，避免撑爆上下文。
