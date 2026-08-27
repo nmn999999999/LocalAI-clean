@@ -19,7 +19,10 @@ final class AgentService: ObservableObject {
     @Published private(set) var steps: [Step] = []
     @Published private(set) var isRunning = false
 
-    /// 循环不设轮数上限：唯一终止条件是模型输出结束暗号（或生成失败/任务取消）。
+    /// 循环不设硬性轮数上限：正常终止条件是模型输出结束暗号（或生成失败/任务取消）。
+    /// 但设一个很大的「软上限」兜底：防止模型永远不输出暗号导致死循环烧电。
+    /// 到达软上限前一轮会先通知模型强制收尾；若仍无暗号则优雅退出并返回最后一轮内容。
+    static let softIterationLimit = 50
 
     /// Agent 循环结束「暗号」：模型给出最终回答前必须先输出它，
     /// 循环据此判定"模型已收集够信息，可以结束"。
@@ -56,9 +59,22 @@ final class AgentService: ObservableObject {
         var workingHistory = history
         var allToolCalls: [ChatMessage.ToolCall] = []
         var lastThinking: String?
+        var iteration = 0
 
         while true {
             guard !Task.isCancelled else { break }
+            iteration += 1
+
+            // 软上限前一轮：通知模型这是最后一轮，必须收尾
+            if iteration == Self.softIterationLimit {
+                appendStep(.thinking, "已连续思考 \(iteration - 1) 轮未结束，通知模型收尾")
+                workingHistory.append(ChatMessage(role: .tool, content: """
+                你已连续思考很多轮。本轮是最后一轮：不要再调用工具，\
+                立即输出 \(Self.endSignal)，然后基于以上所有信息给出最终回答正文。
+                """))
+            }
+            // 超过软上限仍未结束：优雅退出，返回最后一轮内容
+            if iteration > Self.softIterationLimit { break }
 
             let promptMessages = withToolInstructions(history: workingHistory, tools: toolsEnabledTools)
 
@@ -130,13 +146,13 @@ final class AgentService: ObservableObject {
             }
         }
 
-        // 循环仅在「取消」时到达这里：返回最后一轮思考内容（保证不吞回答）
+        // 循环仅在「取消」或「软上限耗尽」时到达这里：返回最后一轮思考内容（保证不吞回答）
         if let last = lastThinking, !last.isEmpty {
             appendStep(.finalAnswer, "已停止（未输出结束暗号），返回最后一轮内容")
             return (last, allToolCalls)
         }
 
-        let fallback = "已停止思考。以上为当前结果。"
+        let fallback = "已停止思考（达到轮数上限或被取消）。以上为当前结果。"
         appendStep(.finalAnswer, fallback)
         return (fallback, allToolCalls)
     }

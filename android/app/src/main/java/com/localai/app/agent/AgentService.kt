@@ -14,8 +14,12 @@ import kotlin.coroutines.coroutineContext
 import org.json.JSONObject
 
 /** Agent 循环：模型决定是否调用工具，工具结果回填上下文。
- *  循环不设轮数上限：唯一终止条件是模型输出结束暗号（或生成失败/协程取消）。 */
+ *  循环不设硬性轮数上限：正常终止条件是模型输出结束暗号（或生成失败/协程取消）。
+ *  但设一个很大的「软上限」兜底：防止模型永远不输出暗号导致死循环烧电。
+ *  到达软上限前一轮会先通知模型强制收尾；若仍无暗号则优雅退出并返回最后一轮内容。 */
 object AgentService {
+
+    const val SOFT_ITERATION_LIMIT = 50
 
     data class Step(val id: Long, val kind: Kind, val detail: String) {
         enum class Kind { THINKING, EXECUTING, RESULT, FINAL_ANSWER }
@@ -50,9 +54,22 @@ object AgentService {
             var workingHistory = history.toMutableList()
             val allToolCalls = mutableListOf<ToolCall>()
             var lastThinking: String? = null
+            var iteration = 0
 
             while (true) {
                 if (!coroutineContext.isActive) break
+                iteration++
+
+                // 软上限前一轮：通知模型这是最后一轮，必须收尾
+                if (iteration == SOFT_ITERATION_LIMIT) {
+                    appendStep(Step.Kind.THINKING, "已连续思考 ${iteration - 1} 轮未结束，通知模型收尾")
+                    workingHistory.add(ChatMessage(role = MessageRole.TOOL, content = """
+                        你已连续思考很多轮。本轮是最后一轮：不要再调用工具，
+                        立即输出 $END_SIGNAL，然后基于以上所有信息给出最终回答正文。
+                        """.trimIndent()))
+                }
+                // 超过软上限仍未结束：优雅退出，返回最后一轮内容
+                if (iteration > SOFT_ITERATION_LIMIT) break
 
                 val promptMessages = withToolInstructions(workingHistory)
                 val raw = try {
@@ -115,12 +132,12 @@ object AgentService {
                     workingHistory.add(ChatMessage(role = MessageRole.TOOL, content = hint))
                 }
             }
-            // 循环仅在「取消」时到达这里：返回最后一轮思考内容（保证不吞回答）
+            // 循环仅在「取消」或「软上限耗尽」时到达这里：返回最后一轮思考内容（保证不吞回答）
             if (!lastThinking.isNullOrEmpty()) {
                 appendStep(Step.Kind.FINAL_ANSWER, "已停止（未输出结束暗号），返回最后一轮内容")
                 return Pair(lastThinking, allToolCalls)
             }
-            val fallback = "已停止思考。以上为当前结果。"
+            val fallback = "已停止思考（达到轮数上限或被取消）。以上为当前结果。"
             appendStep(Step.Kind.FINAL_ANSWER, fallback)
             return Pair(fallback, allToolCalls)
         } finally {
