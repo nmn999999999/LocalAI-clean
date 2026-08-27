@@ -116,7 +116,7 @@ struct ModelSettings: Codable, Sendable {
     var systemPrompt: String
     /// GPU offload 层数。0 = 纯 CPU（iPhone 上最稳定）；>0 部分/全部层走 Metal。
     var gpuLayers: Int
-    /// 搜索服务："searxng"（自托管 SearXNG，可聚合 Google/Bing/百度等）或 "wikipedia"（内置回退）
+    /// 搜索服务："web"（设备直连网页搜索：Bing → DuckDuckGo → 维基百科）或 "wikipedia"（仅维基百科）
     var searchEngine: String
     /// SearXNG 实例地址（如 https://searx.be 或自建 http://192.168.1.10:8080）
     var searxngURL: String
@@ -129,8 +129,8 @@ struct ModelSettings: Codable, Sendable {
         contextLength: Int = 4096,
         systemPrompt: String = "你是一个有帮助的AI助手。请用中文回答。",
         gpuLayers: Int = 0,
-        searchEngine: String = "wikipedia",
-        searxngURL: String = "https://searx.be"
+        searchEngine: String = "web",
+        searxngURL: String = ""
     ) {
         self.temperature = temperature
         self.topP = topP
@@ -161,8 +161,12 @@ struct ModelSettings: Codable, Sendable {
         systemPrompt = try c.decodeIfPresent(String.self, forKey: .systemPrompt)
             ?? "你是一个有帮助的AI助手。请用中文回答。"
         gpuLayers = try c.decodeIfPresent(Int.self, forKey: .gpuLayers) ?? 0
-        searchEngine = try c.decodeIfPresent(String.self, forKey: .searchEngine) ?? "wikipedia"
-        searxngURL = try c.decodeIfPresent(String.self, forKey: .searxngURL) ?? "https://searx.be"
+        // 旧存档兼容：曾用 "searxng"（已废弃）一律归一化为 "web"
+        switch try c.decodeIfPresent(String.self, forKey: .searchEngine) ?? "web" {
+        case "wikipedia": searchEngine = "wikipedia"
+        default: searchEngine = "web"
+        }
+        searxngURL = try c.decodeIfPresent(String.self, forKey: .searxngURL) ?? ""
     }
 
     func encode(to encoder: Encoder) throws {

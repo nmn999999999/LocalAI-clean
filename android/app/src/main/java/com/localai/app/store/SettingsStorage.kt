@@ -31,8 +31,12 @@ object SettingsStorage {
                     contextLength = o.optInt("contextLength", 4096),
                     systemPrompt = o.optString("systemPrompt", "你是一个有帮助的AI助手。请用中文回答。"),
                     gpuLayers = o.optInt("gpuLayers", 0),
-                    searchEngine = o.optString("searchEngine", "wikipedia"),
-                    searxngURL = o.optString("searxngURL", "https://searx.be"),
+                    // 旧存档兼容：曾用 "searxng"（已废弃）一律归一化为 "web"
+                    searchEngine = when (o.optString("searchEngine", "web")) {
+                        "wikipedia" -> "wikipedia"
+                        else -> "web"
+                    },
+                    searxngURL = o.optString("searxngURL", ""),
                 )
             }.getOrElse { ModelSettings() }
         }

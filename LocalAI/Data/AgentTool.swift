@@ -189,7 +189,7 @@ enum BuiltInTools {
         AgentToolDefinition(
             id: "web_search",
             name: "web_search",
-            description: "联网搜索维基百科，返回相关条目与链接",
+            description: "联网搜索网页（Bing 等），返回相关结果标题、链接与摘要",
             parameters: [
                 "query": .init(type: "string", description: "搜索关键词", enumValues: nil)
             ]

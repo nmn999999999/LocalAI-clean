@@ -9,7 +9,7 @@ data class ModelSettings(
     var systemPrompt: String = "你是一个有帮助的AI助手。请用中文回答。",
     // 0 = 纯 CPU（Android 上最稳）；>0 部分层用 GPU 加速（需硬件支持）
     var gpuLayers: Int = 0,
-    // 搜索服务："searxng"（自托管 SearXNG）或 "wikipedia"（内置回退）
-    var searchEngine: String = "wikipedia",
-    var searxngURL: String = "https://searx.be",
+    // 搜索服务："web"（设备直连网页搜索：Bing → DuckDuckGo → 维基百科）或 "wikipedia"（仅维基百科）
+    var searchEngine: String = "web",
+    var searxngURL: String = "",
 )

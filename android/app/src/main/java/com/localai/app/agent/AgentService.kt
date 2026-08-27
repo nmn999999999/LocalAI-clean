@@ -9,9 +9,12 @@ import com.localai.app.llm.LLMService
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
+import kotlin.coroutines.coroutineContext
 import org.json.JSONObject
 
-/** Agent 循环：模型决定是否调用工具，工具结果回填上下文，最多 maxIterations 轮。 */
+/** Agent 循环：模型决定是否调用工具，工具结果回填上下文。
+ *  循环不设轮数上限：唯一终止条件是模型输出结束暗号（或生成失败/协程取消）。 */
 object AgentService {
 
     data class Step(val id: Long, val kind: Kind, val detail: String) {
@@ -23,8 +26,6 @@ object AgentService {
 
     private val _isRunning = MutableStateFlow(false)
     val isRunning: StateFlow<Boolean> = _isRunning
-
-    const val maxIterations = 6
 
     /** Agent 循环结束「暗号」：模型给出最终回答前必须先输出它，循环据此判定结束。 */
     const val END_SIGNAL = "[[FINAL_ANSWER]]"
@@ -50,7 +51,9 @@ object AgentService {
             val allToolCalls = mutableListOf<ToolCall>()
             var lastThinking: String? = null
 
-            repeat(maxIterations) {
+            while (true) {
+                if (!coroutineContext.isActive) break
+
                 val promptMessages = withToolInstructions(workingHistory)
                 val raw = try {
                     val sb = StringBuilder()
@@ -112,12 +115,12 @@ object AgentService {
                     workingHistory.add(ChatMessage(role = MessageRole.TOOL, content = hint))
                 }
             }
-            // 兜底：轮数耗尽仍未输出暗号 → 返回最后一轮思考内容（保证不吞回答）
+            // 循环仅在「取消」时到达这里：返回最后一轮思考内容（保证不吞回答）
             if (!lastThinking.isNullOrEmpty()) {
-                appendStep(Step.Kind.FINAL_ANSWER, "已达轮数上限且未输出暗号，返回最后一轮内容")
+                appendStep(Step.Kind.FINAL_ANSWER, "已停止（未输出结束暗号），返回最后一轮内容")
                 return Pair(lastThinking, allToolCalls)
             }
-            val fallback = "已达到最大思考轮数（$maxIterations）。以上为当前结果。"
+            val fallback = "已停止思考。以上为当前结果。"
             appendStep(Step.Kind.FINAL_ANSWER, fallback)
             return Pair(fallback, allToolCalls)
         } finally {

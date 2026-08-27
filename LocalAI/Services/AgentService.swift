@@ -19,7 +19,7 @@ final class AgentService: ObservableObject {
     @Published private(set) var steps: [Step] = []
     @Published private(set) var isRunning = false
 
-    static let maxIterations = 6
+    /// 循环不设轮数上限：唯一终止条件是模型输出结束暗号（或生成失败/任务取消）。
 
     /// Agent 循环结束「暗号」：模型给出最终回答前必须先输出它，
     /// 循环据此判定"模型已收集够信息，可以结束"。
@@ -57,7 +57,7 @@ final class AgentService: ObservableObject {
         var allToolCalls: [ChatMessage.ToolCall] = []
         var lastThinking: String?
 
-        for _ in 0..<Self.maxIterations {
+        while true {
             guard !Task.isCancelled else { break }
 
             let promptMessages = withToolInstructions(history: workingHistory, tools: toolsEnabledTools)
@@ -130,13 +130,13 @@ final class AgentService: ObservableObject {
             }
         }
 
-        // 兜底：轮数耗尽仍未输出暗号 → 返回最后一轮思考内容（保证不吞回答）
+        // 循环仅在「取消」时到达这里：返回最后一轮思考内容（保证不吞回答）
         if let last = lastThinking, !last.isEmpty {
-            appendStep(.finalAnswer, "已达轮数上限且未输出暗号，返回最后一轮内容")
+            appendStep(.finalAnswer, "已停止（未输出结束暗号），返回最后一轮内容")
             return (last, allToolCalls)
         }
 
-        let fallback = "已达到最大思考轮数（\(Self.maxIterations)）。以上为当前结果。"
+        let fallback = "已停止思考。以上为当前结果。"
         appendStep(.finalAnswer, fallback)
         return (fallback, allToolCalls)
     }
