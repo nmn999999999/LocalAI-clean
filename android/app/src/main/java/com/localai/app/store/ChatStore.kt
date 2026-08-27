@@ -95,6 +95,8 @@ object ChatStore {
     // MARK: - 持久化
 
     private fun scheduleSave() {
+        // 流式生成中的中间状态不落盘（每 token 触发一次 upsert，避免频繁写大文件）
+        if (_conversations.value.lastOrNull()?.messages?.lastOrNull()?.isStreaming == true) return
         saveTask?.interrupt()
         saveTask = Thread {
             try {

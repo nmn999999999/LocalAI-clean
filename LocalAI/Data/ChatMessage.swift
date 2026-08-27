@@ -56,7 +56,7 @@ struct ChatMessage: Identifiable, Codable, Sendable {
     }
 }
 
-struct Conversation: Identifiable, Codable {
+struct Conversation: Identifiable, Codable, Sendable {
     let id: UUID
     var title: String
     var messages: [ChatMessage]

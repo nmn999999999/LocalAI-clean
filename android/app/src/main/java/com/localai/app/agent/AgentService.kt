@@ -24,7 +24,7 @@ object AgentService {
     private val _isRunning = MutableStateFlow(false)
     val isRunning: StateFlow<Boolean> = _isRunning
 
-    const val maxIterations = 4
+    const val maxIterations = 6
 
     suspend fun run(
         history: List<ChatMessage>,
@@ -65,8 +65,20 @@ object AgentService {
                     workingHistory.add(ChatMessage(role = MessageRole.ASSISTANT, content = raw, toolCalls = listOf(record)))
                     workingHistory.add(ChatMessage(role = MessageRole.TOOL, content = "[${call.name} 结果]\n$limited"))
                 } else {
-                    appendStep(Step.Kind.FINAL_ANSWER, raw)
-                    return Pair(raw, allToolCalls)
+                    // 结尾检测：想调工具但格式错（重试）vs 最终回答（结束）
+                    if (looksLikeToolCall(raw)) {
+                        appendStep(Step.Kind.EXECUTING, "工具调用格式无效，提示模型重试")
+                        workingHistory.add(ChatMessage(role = MessageRole.ASSISTANT, content = raw))
+                        workingHistory.add(ChatMessage(role = MessageRole.TOOL, content = """
+                            你的输出不是有效的工具调用 JSON。规则：
+                            - 需要调用工具时，只输出一个 JSON 对象（不要其他文字）：{"name": "<工具名>", "arguments": {...}}
+                            - 已经掌握足够信息时，直接给出最终回答（正常中文），不要输出 JSON。
+                            请重新输出。
+                        """.trimIndent()))
+                    } else {
+                        appendStep(Step.Kind.FINAL_ANSWER, raw)
+                        return Pair(raw, allToolCalls)
+                    }
                 }
             }
             val fallback = "已达到最大工具调用轮数（$maxIterations）。以上为当前结果。"
@@ -75,6 +87,13 @@ object AgentService {
         } finally {
             _isRunning.value = false
         }
+    }
+
+    /** 结尾检测辅助：输出看起来像工具调用但 JSON 解析失败。 */
+    private fun looksLikeToolCall(text: String): Boolean {
+        val lower = text.lowercase()
+        if (lower.contains("\"name\"") || lower.contains("\"arguments\"") || lower.contains("调用工具")) return true
+        return BuiltInTools.allTools.any { text.contains(it.name) }
     }
 
     fun reset() {
@@ -106,7 +125,11 @@ object AgentService {
         ## 调用规则
         1. 一次最多调用一个工具；参数名必须与工具定义完全一致。
         2. 数字参数直接写数值（如 5、3.14）；布尔写 true/false；其余一律写字符串。
-        3. 先判断是否需要工具：需要查数据/算数/操作时才调用；否则直接用中文回答。
+        3. 需要查数据/算数/操作时才调用工具；否则直接用中文回答。
+
+        ## 多轮思考与执行
+        你可以连续进行多轮：每轮调用一个工具 → 观察返回的工具结果 → 再决定调用下一个工具或给出最终回答。
+        当你已经收集到足够信息时，直接输出最终回答（正常中文），不要再输出 JSON。
 
         ## 工具列表
         $catalog

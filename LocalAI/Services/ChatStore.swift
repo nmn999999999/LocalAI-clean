@@ -83,6 +83,10 @@ final class ChatStore: ObservableObject {
     // MARK: - 持久化
 
     private func scheduleSave() {
+        // 流式生成中的中间状态不落盘：每个 token 都会触发 conversations 变化，
+        // 若照常持久化，主线程会持续做 JSON 编码与写盘（含图片 base64 时文件很大），
+        // 导致主线程卡顿（runloop hang）。等 isStreaming 结束时再保存一次即可。
+        if conversations.last?.messages.last?.isStreaming == true { return }
         saveTask?.cancel()
         saveTask = Task {
             try? await Task.sleep(nanoseconds: 500_000_000)
@@ -92,11 +96,16 @@ final class ChatStore: ObservableObject {
     }
 
     private func persist() {
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        encoder.outputFormatting = [.sortedKeys]
-        guard let data = try? encoder.encode(conversations) else { return }
-        try? data.write(to: saveURL, options: .atomic)
+        let snapshot = conversations
+        let url = saveURL
+        // JSON 编码与写盘移到后台线程，避免阻塞主线程
+        Task.detached(priority: .utility) {
+            let encoder = JSONEncoder()
+            encoder.dateEncodingStrategy = .iso8601
+            encoder.outputFormatting = [.sortedKeys]
+            guard let data = try? encoder.encode(snapshot) else { return }
+            try? data.write(to: url, options: .atomic)
+        }
     }
 
     private func load() {
