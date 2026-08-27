@@ -86,3 +86,58 @@ struct Conversation: Identifiable, Codable {
         }
     }
 }
+
+// MARK: - think 块解析（DeepSeek-R1 / Qwen3 风格的 <think>…</think>）
+
+extension ChatMessage {
+    /// 思考内容（不含标签）。流式中若 `</think>` 尚未出现，未闭合部分也算作思考内容。
+    var thinkContent: String? {
+        let parsed = Self.parseThinkBlock(content)
+        return parsed.think.isEmpty ? nil : parsed.think
+    }
+
+    /// 展示给用户的正文字（已剔除 think 块）。
+    var visibleContent: String {
+        Self.parseThinkBlock(content).answer
+    }
+
+    /// 是否仍处于思考阶段（存在未闭合的 think 标签）。
+    var isThinking: Bool {
+        let lower = content.lowercased()
+        let hasOpen = lower.contains("<think>") || lower.contains("<reasoning>")
+        guard hasOpen else { return false }
+        let hasClose = lower.contains("</think>") || lower.contains("</reasoning>")
+        return !hasClose
+    }
+
+    static func parseThinkBlock(_ content: String) -> (think: String, answer: String) {
+        var think = ""
+        var answer = ""
+        var rest = Substring(content)
+
+        while true {
+            let open = rest.range(of: "<think>", options: [.caseInsensitive])
+                ?? rest.range(of: "<reasoning>", options: [.caseInsensitive])
+            guard let open else {
+                answer += rest
+                break
+            }
+            answer += rest[rest.startIndex..<open.lowerBound]
+            let afterOpen = rest[open.upperBound...]
+            if let close = afterOpen.range(of: "</think>", options: [.caseInsensitive])
+                ?? afterOpen.range(of: "</reasoning>", options: [.caseInsensitive]) {
+                think += afterOpen[afterOpen.startIndex..<close.lowerBound]
+                rest = afterOpen[close.upperBound...]
+            } else {
+                think += afterOpen
+                break
+            }
+        }
+
+        let ws = CharacterSet.whitespacesAndNewlines
+        return (
+            think.trimmingCharacters(in: ws),
+            answer.trimmingCharacters(in: ws)
+        )
+    }
+}

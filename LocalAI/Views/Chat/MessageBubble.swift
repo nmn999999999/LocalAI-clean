@@ -41,8 +41,22 @@ struct MessageBubble: View {
         case .assistant:
             VStack(alignment: .leading, spacing: 6) {
                 toolCallChips
-                Text(message.content)
-                    .textSelection(.enabled)
+                if let think = message.thinkContent, !think.isEmpty {
+                    ThinkSection(think: think, isThinking: message.isThinking)
+                }
+                if !message.visibleContent.isEmpty {
+                    Text(message.visibleContent)
+                        .textSelection(.enabled)
+                } else if message.isStreaming && message.thinkContent == nil {
+                    HStack(spacing: 6) {
+                        ProgressView()
+                            .controlSize(.mini)
+                        Text("思考中…")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.vertical, 2)
+                }
             }
             .padding(.horizontal, 4)
 
@@ -151,5 +165,55 @@ struct ToolCallChip: View {
               let str = String(data: pretty, encoding: .utf8)
         else { return call.arguments }
         return str
+    }
+}
+
+// MARK: - 思考内容折叠区（<think>…</think>）
+
+struct ThinkSection: View {
+    let think: String
+    var isThinking: Bool
+    @State private var expanded = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button {
+                withAnimation(.snappy) { expanded.toggle() }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "brain.head.profile")
+                        .foregroundStyle(.tint)
+                    Text(isThinking ? "思考中" : "已深度思考")
+                        .font(.footnote.weight(.medium))
+                    Spacer()
+                    if isThinking {
+                        ProgressView()
+                            .controlSize(.mini)
+                    } else {
+                        Image(systemName: "chevron.down")
+                            .font(.caption2.bold())
+                            .rotationEffect(.degrees(expanded ? 180 : 0))
+                    }
+                }
+                .foregroundStyle(.secondary)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if expanded {
+                Text(think)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+        .padding(10)
+        .background(.ultraThinMaterial, in: .rect(cornerRadius: 14))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14)
+                .strokeBorder(.quaternary, lineWidth: 1)
+        )
     }
 }

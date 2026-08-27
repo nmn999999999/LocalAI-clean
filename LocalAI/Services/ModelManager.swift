@@ -13,6 +13,7 @@ final class ModelManager: ObservableObject {
 
     private var activeTasks: [String: Task<Void, Never>] = [:]
     private var sessions: [String: URLSession] = [:]
+    private static let lastModelKey = "model.last.used.v1"
 
     struct StoredModel: Codable, Identifiable, Hashable, Sendable {
         let id: String
@@ -55,6 +56,47 @@ final class ModelManager: ObservableObject {
 
     func localFileURL(for stored: StoredModel) -> URL {
         localFileURL(fileName: stored.fileName)
+    }
+
+    // MARK: - 最后使用的模型（退出后自动记住）
+
+    private static func lastModelID() -> String? {
+        UserDefaults.standard.string(forKey: lastModelKey)
+    }
+
+    /// 记录最近一次加载的模型，供下次启动自动加载。
+    func rememberLastUsed(_ stored: StoredModel) {
+        UserDefaults.standard.set(stored.id, forKey: Self.lastModelKey)
+    }
+
+    /// 最近使用的模型（若文件还在则返回）。
+    var lastUsedModel: StoredModel? {
+        guard let id = Self.lastModelID() else { return nil }
+        return downloadedModels.first(where: { $0.id == id })
+    }
+
+    /// 自动检测：扫描 Models 目录把未被索引的 .gguf 文件补进列表。
+    private func rescanModelsDirectory() {
+        let dir = Self.modelsDirectory
+        let fm = FileManager.default
+        guard let files = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: [.fileSizeKey]) else { return }
+        for fileURL in files {
+            let ext = fileURL.pathExtension.lowercased()
+            guard ext == "gguf" || ext == "ggml" || ext == "bin" else { continue }
+            let fileName = fileURL.lastPathComponent
+            let baseName = (fileName as NSString).deletingPathExtension
+            if !downloadedModels.contains(where: { $0.fileName == fileName }) {
+                let size = (try? fileURL.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
+                downloadedModels.append(StoredModel(
+                    id: "scan-\(fileName)",
+                    name: baseName,
+                    fileName: fileName,
+                    sizeBytes: Int64(size),
+                    addedAt: Date()
+                ))
+            }
+        }
+        saveIndex()
     }
 
     // MARK: - 下载（HuggingFace）
@@ -228,9 +270,12 @@ final class ModelManager: ObservableObject {
     }
 
     private func loadIndex() {
-        guard let data = try? Data(contentsOf: indexURL) else { return }
-        let list = try? JSONDecoder().decode([StoredModel].self, from: data)
-        downloadedModels = list ?? []
+        if let data = try? Data(contentsOf: indexURL) {
+            let list = try? JSONDecoder().decode([StoredModel].self, from: data)
+            downloadedModels = list ?? []
+        }
+        // 自动检测：把目录里未被索引的 .gguf 文件补进来
+        rescanModelsDirectory()
     }
 
     private func saveIndex() {

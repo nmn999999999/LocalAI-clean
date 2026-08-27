@@ -35,8 +35,9 @@ struct SettingsView: View {
                 stepperRow("Top-K", value: $storage.settings.topK, in: 1...100, step: 5)
                 stepperRow("最大生成 Token", value: $storage.settings.maxTokens, in: 256...8192, step: 256)
                 stepperRow("上下文长度", value: $storage.settings.contextLength, in: 1024...32768, step: 1024)
+                stepperRow("GPU 层数 (0=纯CPU)", value: $storage.settings.gpuLayers, in: 0...99, step: 8)
 
-                Text("参数在下次对话时生效。上下文越长占用内存越高。")
+                Text("参数在下次对话时生效。上下文越长占用内存越高。iPhone 上 Metal 后端可能有兼容问题，默认 0（纯 CPU）最稳定；调高 GPU 层数可加速，需在「模型」页重新加载模型。")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
@@ -93,7 +94,7 @@ struct SettingsView: View {
         GlassCard {
             VStack(alignment: .leading, spacing: 8) {
                 SectionHeader(title: "关于", systemImage: "info.circle")
-                infoRow("推理引擎", "llama.cpp (GGUF) via LLM.swift")
+                infoRow("推理引擎", "llama.cpp (GGUF) + mtmd 多模态")
                 infoRow("界面", "SwiftUI · Liquid Glass (iOS 26+)")
                 infoRow("隐私", "全部推理在本机完成，无网络上传")
             }

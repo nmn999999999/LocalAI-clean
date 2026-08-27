@@ -1,7 +1,7 @@
 import SwiftUI
 
-// iOS 26+ 使用 Xcode 26 SDK 构建时，TabView 的底部标签栏
-// 自动呈现悬浮式 Liquid Glass 材质，滚动时会自动最小化。
+// iOS 27+ 使用 Xcode 27 SDK 构建，TabView 自动呈现液态玻璃效果
+// iOS 17-26 使用传统 TabView
 struct MainTabView: View {
     var body: some View {
         TabView {
@@ -20,7 +20,9 @@ struct MainTabView: View {
                     Label("设置", systemImage: "gearshape.fill")
                 }
         }
+#if swift(>=27.0)
         .tabBarMinimizeBehavior(.onScrollDown)
+#endif
     }
 }
 

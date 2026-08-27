@@ -114,6 +114,8 @@ struct ModelSettings: Codable, Sendable {
     var maxTokens: Int
     var contextLength: Int
     var systemPrompt: String
+    /// GPU offload 层数。0 = 纯 CPU（iPhone 上最稳定）；>0 部分/全部层走 Metal。
+    var gpuLayers: Int
 
     init(
         temperature: Double = 0.7,
@@ -121,7 +123,8 @@ struct ModelSettings: Codable, Sendable {
         topK: Int = 40,
         maxTokens: Int = 2048,
         contextLength: Int = 4096,
-        systemPrompt: String = "你是一个有帮助的AI助手。请用中文回答。"
+        systemPrompt: String = "你是一个有帮助的AI助手。请用中文回答。",
+        gpuLayers: Int = 0
     ) {
         self.temperature = temperature
         self.topP = topP
@@ -129,7 +132,36 @@ struct ModelSettings: Codable, Sendable {
         self.maxTokens = maxTokens
         self.contextLength = contextLength
         self.systemPrompt = systemPrompt
+        self.gpuLayers = gpuLayers
     }
 
     static let `default` = ModelSettings()
+
+    // 兼容旧存档：新字段缺失时使用默认值，避免整个设置被重置
+    enum CodingKeys: String, CodingKey {
+        case temperature, topP, topK, maxTokens, contextLength, systemPrompt, gpuLayers
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        temperature = try c.decodeIfPresent(Double.self, forKey: .temperature) ?? 0.7
+        topP = try c.decodeIfPresent(Double.self, forKey: .topP) ?? 0.9
+        topK = try c.decodeIfPresent(Int.self, forKey: .topK) ?? 40
+        maxTokens = try c.decodeIfPresent(Int.self, forKey: .maxTokens) ?? 2048
+        contextLength = try c.decodeIfPresent(Int.self, forKey: .contextLength) ?? 4096
+        systemPrompt = try c.decodeIfPresent(String.self, forKey: .systemPrompt)
+            ?? "你是一个有帮助的AI助手。请用中文回答。"
+        gpuLayers = try c.decodeIfPresent(Int.self, forKey: .gpuLayers) ?? 0
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(temperature, forKey: .temperature)
+        try c.encode(topP, forKey: .topP)
+        try c.encode(topK, forKey: .topK)
+        try c.encode(maxTokens, forKey: .maxTokens)
+        try c.encode(contextLength, forKey: .contextLength)
+        try c.encode(systemPrompt, forKey: .systemPrompt)
+        try c.encode(gpuLayers, forKey: .gpuLayers)
+    }
 }

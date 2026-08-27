@@ -15,3 +15,16 @@ LocalAI.xcodeproj/
 
 # 运行时产物（不应入库）
 *.gguf
+
+# Android 构建产物（由 gradle / build_native.sh 重建）
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/app/src/main/jniLibs/
+*.apk
+*.aab
+
+# llama.cpp 交叉编译产物（由 build_llama_xcframework.sh / android/build_native.sh 重建）
+build-ios/
+llama.xcframework/

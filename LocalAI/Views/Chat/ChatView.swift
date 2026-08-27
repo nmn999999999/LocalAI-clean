@@ -16,6 +16,9 @@ struct ChatView: View {
     @State private var attachments: [ChatMessage.ImageData] = []
     @State private var showConversationList = false
     @State private var errorMessage: String?
+    @State private var isGenerating = false
+    @State private var generationTask: Task<Void, Never>?
+    @FocusState private var inputFocused: Bool
 
     var body: some View {
         NavigationStack {
@@ -56,11 +59,7 @@ struct ChatView: View {
                     }
                     ForEach(chatStore.currentOrNew.messages) { message in
                         MessageBubble(message: message)
-                            .id(message.id)
-                    }
-                    if llmService.isGenerating {
-                        GeneratingIndicator(text: llmService.partialOutput)
-                            .id("generating")
+                            .id(message.id.uuidString)
                     }
                 }
                 .padding(.horizontal, 14)
@@ -68,17 +67,27 @@ struct ChatView: View {
             }
             .onChange(of: chatStore.currentOrNew.messages.count) { _, _ in
                 withAnimation(.snappy) {
-                    proxy.scrollTo(bottomAnchor, anchor: .bottom)
+                    scrollToBottom(proxy)
                 }
             }
-            .onChange(of: llmService.partialOutput) { _, _ in
-                proxy.scrollTo(bottomAnchor, anchor: .bottom)
+            .onChange(of: chatStore.currentOrNew.messages.last?.content) { _, _ in
+                scrollToBottom(proxy)
             }
             .defaultScrollAnchor(.bottom)
+            // 在消息列表上下滑即可收起键盘
+            .scrollDismissesKeyboard(.interactively)
+            .onTapGesture {
+                // 点消息区域空白处收起键盘
+                inputFocused = false
+            }
         }
     }
 
-    private var bottomAnchor: String { "generating" }
+    private func scrollToBottom(_ proxy: ScrollViewProxy) {
+        if let id = chatStore.currentOrNew.messages.last?.id.uuidString {
+            proxy.scrollTo(id, anchor: .bottom)
+        }
+    }
 
     private var emptyState: some View {
         VStack(spacing: 16) {
@@ -160,6 +169,7 @@ struct ChatView: View {
                 TextField("输入消息…", text: $inputText, axis: .vertical)
                     .lineLimit(1...5)
                     .textFieldStyle(.plain)
+                    .focused($inputFocused)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 10)
                     .glassEffect(.regular, in: .capsule)
@@ -177,34 +187,30 @@ struct ChatView: View {
 
     private var sendButton: some View {
         Button {
-            if llmService.isGenerating {
+            if isGenerating {
                 stopGeneration()
             } else {
                 sendMessage()
             }
         } label: {
-            Image(systemName: llmService.isGenerating
+            Image(systemName: isGenerating
                   ? "stop.circle.fill"
                   : (canSend ? "arrow.up.circle.fill" : "arrow.up.circle"))
                 .font(.system(size: 26))
         }
         .buttonStyle(.glassProminent)
-        .disabled(!canSend && !llmService.isGenerating)
+        .disabled(!canSend && !isGenerating)
     }
 
     private func stopGeneration() {
-        llmService.stopGeneration()
-        let partial = llmService.partialOutput
-        llmService.partialOutput = ""
-        if !partial.isEmpty {
-            appendAssistant(content: partial, toolCalls: [])
-        }
+        generationTask?.cancel()
+        generationTask = nil
     }
 
     private var canSend: Bool {
         let hasText = !inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let hasImage = !attachments.isEmpty
-        return llmService.isModelReady && (hasText || hasImage) && !llmService.isGenerating
+        return llmService.isModelReady && (hasText || hasImage) && !isGenerating
     }
 
     // MARK: - 工具栏
@@ -248,6 +254,9 @@ struct ChatView: View {
     private func loadModel(_ stored: ModelManager.StoredModel) async {
         let url = modelManager.localFileURL(for: stored)
         await llmService.load(url: url, displayName: stored.name)
+        if case .ready = llmService.state {
+            modelManager.rememberLastUsed(stored)
+        }
         if case .failed(let msg) = llmService.state {
             errorMessage = msg
         }
@@ -261,40 +270,70 @@ struct ChatView: View {
         inputText = ""
         attachments = []
         selectedItems = []
+        inputFocused = false // 发送后收起键盘
 
         var conv = chatStore.currentOrNew
         conv.messages.append(ChatMessage(role: .user, content: text, images: images))
         conv.updateTitle()
         conv.modelName = llmService.loadedModelName
+
+        // 预插入一条流式 assistant 消息，token 逐字更新到气泡内
+        let assistantMsg = ChatMessage(role: .assistant, content: "", isStreaming: true)
+        conv.messages.append(assistantMsg)
         chatStore.upsert(conv)
 
-        let history = conv.messages
+        // 传给引擎的历史不包含占位消息本身
+        let history = conv.messages.filter { $0.id != assistantMsg.id }
         let settings = SettingsStorage.shared.settings
 
-        Task {
+        isGenerating = true
+        generationTask = Task {
+            defer {
+                isGenerating = false
+                generationTask = nil
+            }
+
+            if isAgentMode {
+                let result = await agentService.run(
+                    history: history,
+                    settings: settings,
+                    llm: llmService
+                )
+                updateAssistant(id: assistantMsg.id, content: result.content, toolCalls: result.toolCalls)
+                return
+            }
+
+            var full = ""
             do {
-                if isAgentMode {
-                    let result = await agentService.run(
-                        history: history,
-                        settings: settings,
-                        llm: llmService
-                    )
-                    appendAssistant(content: result.content, toolCalls: result.toolCalls)
-                } else {
-                    let stream = llmService.streamChat(history: history, settings: settings)
-                    var full = ""
-                    for try await token in stream {
-                        full += token
-                        llmService.partialOutput = full
-                    }
-                    llmService.partialOutput = ""
-                    appendAssistant(content: full, toolCalls: [])
+                let stream = llmService.streamChat(history: history, settings: settings)
+                for try await token in stream {
+                    full += token
+                    updateAssistant(id: assistantMsg.id, content: full)
                 }
+                updateAssistant(id: assistantMsg.id, content: full, streaming: false)
             } catch {
-                llmService.partialOutput = ""
-                errorMessage = error.localizedDescription
+                updateAssistant(id: assistantMsg.id, content: full, streaming: false)
+                if !Task.isCancelled {
+                    errorMessage = error.localizedDescription
+                }
             }
         }
+    }
+
+    /// 原位更新流式 assistant 消息（每来一个 token 调用一次）。
+    private func updateAssistant(
+        id: UUID,
+        content: String,
+        toolCalls: [ChatMessage.ToolCall] = [],
+        streaming: Bool = true
+    ) {
+        var conv = chatStore.currentOrNew
+        guard let idx = conv.messages.firstIndex(where: { $0.id == id }) else { return }
+        conv.messages[idx].content = content
+        conv.messages[idx].toolCalls = toolCalls
+        conv.messages[idx].isStreaming = streaming
+        conv.messages[idx].timestamp = Date()
+        chatStore.upsert(conv)
     }
 
     private func appendAssistant(content: String, toolCalls: [ChatMessage.ToolCall]) {
@@ -328,23 +367,5 @@ struct ChatView: View {
         #else
         return ChatMessage.ImageData(data: data, mimeType: "image/png")
         #endif
-    }
-}
-
-// MARK: - 生成中指示器
-
-struct GeneratingIndicator: View {
-    let text: String
-
-    var body: some View {
-        HStack(alignment: .bottom, spacing: 8) {
-            Text(text.isEmpty ? "思考中…" : text)
-                .font(.body)
-                .foregroundStyle(.secondary)
-            Image(systemName: "circle.dotted")
-                .foregroundStyle(.tint)
-                .symbolEffect(.rotate)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }

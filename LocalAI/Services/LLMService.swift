@@ -143,7 +143,9 @@ final class LLMService: ObservableObject {
 
     private func toEngineMessages(_ messages: [ChatMessage], settings: ModelSettings) -> [EngineMessage] {
         var result: [EngineMessage] = []
-        if !settings.systemPrompt.isEmpty {
+        // 若消息里已含 system（例如 Agent 注入了工具说明），保留它，不再重复添加设置里的系统提示词
+        let hasSystem = messages.contains { $0.role == .system }
+        if !hasSystem, !settings.systemPrompt.isEmpty {
             result.append(EngineMessage(role: .system, content: settings.systemPrompt))
         }
         for m in messages {
@@ -155,20 +157,16 @@ final class LLMService: ObservableObject {
             case .tool:
                 result.append(.init(role: .tool, content: m.content))
             case .system:
-                continue
+                result.append(.init(role: .system, content: m.content))
             }
         }
         return result
     }
 
-    /// 创建 llama.cpp(GGUF) 引擎。未集成 LLM.swift 时回退到演示引擎。
+    /// 创建 llama.cpp(GGUF) 引擎（本地推理，支持多模态）。
     private func makeLlamaEngine(url: URL) async throws -> LLMEngine {
-        #if canImport(LLM)
-        return try await LlamaSwiftEngine(modelURL: url)
-        #else
-        _ = url
-        return EchoEngine()
-        #endif
+        let gpuLayers = SettingsStorage.shared.settings.gpuLayers
+        return try await LlamaSwiftEngine(modelURL: url, gpuLayers: Int32(gpuLayers))
     }
 }
 

@@ -2,13 +2,8 @@ name: LocalAI
 options:
   bundleIdPrefix: com.localai
   deploymentTarget:
-    iOS: "27.0"
+    iOS: "26.0"
   createIntermediateGroups: true
-
-packages:
-  LLM:
-    url: https://github.com/eastriverlee/LLM.swift
-    from: 3.0.0
 
 settings:
   base:
@@ -22,7 +17,7 @@ targets:
     sources:
       - LocalAI
     dependencies:
-      - package: LLM
+      - framework: llama.xcframework
     settings:
       base:
         GENERATE_INFOPLIST_FILE: YES
@@ -34,6 +29,17 @@ targets:
         INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
         # llama.cpp 为 C++ 源码，宿主 App 必须开启 Swift/C++ 互操作
         SWIFT_OBJC_INTEROP_MODE: objcxx
+        # 暴露 C 桥接头文件给 Swift
+        SWIFT_OBJC_BRIDGING_HEADER: LocalAI/LocalAI-Bridging-Header.h
+        # llama.cpp / mtmd 头文件（来自 llama.xcframework 的 Headers）
+        HEADER_SEARCH_PATHS: $(SRCROOT)/llama.xcframework/ios-arm64/Headers
+        # C++20 + 多模态开关
+        CLANG_CXX_LANGUAGE_STANDARD: c++20
+        OTHER_CPLUSPLUSFLAGS: -DBRIDGE_ENABLE_MTMD -std=c++20
+        # 关闭 bitcode（iOS 已废弃）
+        ENABLE_BITCODE: NO
+        # 链接后端框架
+        OTHER_LDFLAGS: $(inherited) -framework Metal -framework Accelerate -framework Foundation
 
 schemes:
   LocalAI:

@@ -50,25 +50,27 @@ final class AgentService: ObservableObject {
             }
 
             if let call = Self.parseToolCall(from: raw) {
-                appendStep(.thinking, "调用工具 \(call.name)(\(call.arguments))")
+                let argsJSON = Self.compactJSON(call.arguments)
+                appendStep(.thinking, "调用工具 \(call.name)(\(argsJSON))")
                 appendStep(.executing, call.name)
 
-                let result = BuiltInTools.execute(toolName: call.name, arguments: call.arguments)
+                let result = await BuiltInTools.execute(toolName: call.name, argumentsJSON: argsJSON)
+                let limited = Self.limitResult(result)
                 let record = ChatMessage.ToolCall(
                     id: UUID().uuidString,
                     name: call.name,
-                    arguments: Self.compactJSON(call.arguments),
-                    result: result
+                    arguments: argsJSON,
+                    result: limited
                 )
                 allToolCalls.append(record)
-                appendStep(.result, "\(call.name) → \(result)")
+                appendStep(.result, "\(call.name) → \(limited)")
 
                 // 把工具结果作为新一轮上下文
                 workingHistory.append(
                     ChatMessage(role: .assistant, content: raw, toolCalls: [record])
                 )
                 workingHistory.append(
-                    ChatMessage(role: .tool, content: "[\(call.name) 结果]\n\(result)")
+                    ChatMessage(role: .tool, content: "[\(call.name) 结果]\n\(limited)")
                 )
             } else {
                 appendStep(.finalAnswer, raw)
@@ -92,27 +94,36 @@ final class AgentService: ObservableObject {
         tools: [AgentToolDefinition]
     ) -> [ChatMessage] {
         let catalog = tools.map { tool -> String in
-            let params = tool.parameters.map { name, schema -> String in
-                var desc = "\"\(name)\": {\(schema.type)"
-                if !schema.description.isEmpty {
-                    desc += ", 描述: \(schema.description)"
-                }
-                if let enums = schema.enumValues, !enums.isEmpty {
-                    desc += ", 可选值: \(enums.joined(separator: "/"))"
-                }
-                return desc + "}"
-            }.joined(separator: "; ")
-            return "- \(tool.name): \(tool.description)。参数: {\(params)}"
+            var lines = "- \(tool.name): \(tool.description)"
+            if !tool.parameters.isEmpty {
+                let params = tool.parameters.map { name, schema -> String in
+                    var s = "  - \(name) (\(schema.type))"
+                    if !schema.description.isEmpty { s += ": \(schema.description)" }
+                    if let enums = schema.enumValues, !enums.isEmpty {
+                        s += " [可选: \(enums.joined(separator: " / "))]"
+                    }
+                    return s
+                }.joined(separator: "\n")
+                lines += "\n  参数:\n\(params)"
+            }
+            return lines
         }.joined(separator: "\n")
 
         let instruction = """
-        你可以调用以下工具（一次最多一个）。
-        当需要调用时，仅输出如下 JSON（不要输出其他文字）：
-        {"name": "<工具名>", "arguments": {<参数对象>}}
-        当不需要工具、可以直接回答时，正常用中文回答即可。
+        ## 你能调用的工具
+        当需要调用工具时，只输出一个 JSON 对象，不要输出任何其他文字、解释或代码块：
 
-        可用工具：
+        {"name": "<工具名>", "arguments": {"<参数名>": <值>, ...}}
+
+        ## 调用规则
+        1. 一次最多调用一个工具；参数名必须与工具定义完全一致。
+        2. 数字参数直接写数值（如 5、3.14）；布尔写 true/false；其余一律写字符串。
+        3. 先判断是否需要工具：需要查数据/算数/操作时才调用；否则直接用中文回答。
+
+        ## 工具列表
         \(catalog)
+
+        请开始。
         """
 
         var messages = history
@@ -141,15 +152,32 @@ final class AgentService: ObservableObject {
         for candidate in extractJSONObjects(in: cleaned) {
             guard let data = candidate.data(using: .utf8),
                   let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let name = obj["name"] as? String,
-                  obj["arguments"] != nil || obj.count <= 2
+                  let name = obj["name"] as? String
             else { continue }
-            let args = obj["arguments"] as? [String: Any] ?? [:]
+
+            // arguments 可能是对象，也可能被模型序列化成了字符串
+            var args: [String: Any] = [:]
+            if let dict = obj["arguments"] as? [String: Any] {
+                args = dict
+            } else if let str = obj["arguments"] as? String {
+                if let d = str.data(using: .utf8),
+                   let parsed = try? JSONSerialization.jsonObject(with: d) as? [String: Any] {
+                    args = parsed
+                }
+            }
+
             if BuiltInTools.allTools.contains(where: { $0.name == name }) {
                 return ParsedCall(name: name, arguments: args)
             }
         }
         return nil
+    }
+
+    /// 截断过长的工具结果，避免撑爆上下文。
+    private static func limitResult(_ result: String, maxLength: Int = 2000) -> String {
+        if result.count <= maxLength { return result }
+        let head = String(result.prefix(maxLength))
+        return head + "\n…(结果过长，已截断)"
     }
 
     /// 粗略提取顶层平衡的 {...} 子串

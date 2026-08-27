@@ -1,0 +1,50 @@
+#ifndef LLAMA_BRIDGE_H
+#define LLAMA_BRIDGE_H
+
+#include <stddef.h>
+#include <stdbool.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+typedef struct llama_bridge llama_bridge;
+
+// Create a bridge instance. Returns 0 on success.
+int  llama_bridge_create(llama_bridge ** out_bridge);
+void llama_bridge_free(llama_bridge * b);
+
+// Load a GGUF model. mmproj_path may be NULL or "" when the model is text-only.
+// Returns true on success; on failure, use llama_bridge_last_error().
+bool llama_bridge_load_model(llama_bridge * b,
+                             const char * model_path,
+                             const char * mmproj_path,
+                             int n_ctx,
+                             int n_gpu_layers,
+                             int n_threads);
+
+// Returns a UTF-8 error string (valid until the next bridge call).
+const char * llama_bridge_last_error(llama_bridge * b);
+
+// Request the running chat generation to stop at the next token boundary.
+// Safe to call from any thread while llama_bridge_chat() is running.
+void llama_bridge_stop(llama_bridge * b);
+
+// Run one chat turn.
+//   messages_json    : JSON array of {"role":"system"|"user"|"assistant"|"tool","content":"..."}
+//   settings_json    : {"temp":f,"top_k":i,"top_p":f,"max_tokens":i}
+//   image_paths_json : JSON array of image file paths (e.g. "[]" or ["/tmp/a.png"])
+//   token_cb         : called with UTF-8 pieces as they are generated
+// Returns 0 on success, nonzero on error.
+int llama_bridge_chat(llama_bridge * b,
+                     const char * messages_json,
+                     const char * settings_json,
+                     const char * image_paths_json,
+                     void (* token_cb)(const char * piece, void * userdata),
+                     void * userdata);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif // LLAMA_BRIDGE_H
