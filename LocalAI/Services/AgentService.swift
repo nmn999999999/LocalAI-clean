@@ -20,8 +20,6 @@ final class AgentService: ObservableObject {
     @Published private(set) var isRunning = false
 
     static let maxIterations = 6
-    /// 格式错误重试上限（防止小模型反复输出坏 JSON 烧光迭代数）
-    static let maxRetries = 2
 
     /// Agent 循环结束「暗号」：模型给出最终回答前必须先输出它，
     /// 循环据此判定"模型已收集够信息，可以结束"。
@@ -29,6 +27,7 @@ final class AgentService: ObservableObject {
 
     /// 检测暗号并提取最终回答。返回 nil 表示输出中没有暗号。
     /// 兼容暗号在前（`暗号+正文`）与在后（`正文+暗号`）两种写法。
+    /// 暗号对用户永远隐藏——展示/返回的只有正文。
     static func extractFinalAnswer(from text: String) -> String? {
         guard text.range(of: endSignal, options: [.caseInsensitive]) != nil else { return nil }
         let cleaned = text
@@ -56,7 +55,7 @@ final class AgentService: ObservableObject {
 
         var workingHistory = history
         var allToolCalls: [ChatMessage.ToolCall] = []
-        var retryCount = 0
+        var lastThinking: String?
 
         for _ in 0..<Self.maxIterations {
             guard !Task.isCancelled else { break }
@@ -103,29 +102,41 @@ final class AgentService: ObservableObject {
                     ChatMessage(role: .tool, content: "[\(call.name) 结果]\n\(limited)")
                 )
             } else {
-                // 3) 无暗号、无有效工具调用：大概率是模型忘了暗号直接给了回答。
-                //    只有明显"想调工具但格式坏了"才有限重试，其余一律按最终回答结束循环。
-                if retryCount < Self.maxRetries,
-                   Self.looksLikeToolCall(raw, tools: toolsEnabledTools),
+                // 3) 无暗号、无有效工具调用：视为模型的中间思考，
+                //    自动触发下一轮思考（思考内容展示在步骤里，不被吞掉）。
+                lastThinking = raw
+                appendStep(.thinking, "思考：\(Self.brief(raw))")
+
+                workingHistory.append(ChatMessage(role: .assistant, content: raw))
+
+                // 若看起来是想调工具但 JSON 写坏了，顺带纠正格式
+                let hint: String
+                if Self.looksLikeToolCall(raw, tools: toolsEnabledTools),
                    Self.looksLikeBrokenJSON(raw) {
-                    retryCount += 1
-                    appendStep(.executing, "工具调用格式无效，提示模型重试（\(retryCount)/\(Self.maxRetries)）")
-                    workingHistory.append(ChatMessage(role: .assistant, content: raw))
-                    workingHistory.append(ChatMessage(role: .tool, content: """
-                    你的输出不是有效的工具调用 JSON。规则：
-                    - 需要调用工具时，只输出一个 JSON 对象（不要其他文字）：{"name": "<工具名>", "arguments": {...}}
-                    - 已经掌握足够信息时，先输出结束暗号 \(Self.endSignal)，然后输出最终回答（正常中文）。
-                    请重新输出。
-                    """))
-                    continue
+                    hint = """
+                    你的输出看起来想调用工具，但不是合法 JSON。规则：
+                    - 调用工具时只输出一个 JSON 对象：{"name": "<工具名>", "arguments": {...}}
+                    - 继续思考就直接输出思考内容
+                    - 得出最终结论时，先输出 \(Self.endSignal)，再输出最终回答正文
+                    请继续。
+                    """
+                } else {
+                    hint = """
+                    继续。若需调用工具，只输出工具 JSON；
+                    若已得出最终结论，先输出 \(Self.endSignal)，然后输出最终回答正文（正常中文）。
+                    """
                 }
-                // 兜底：没有暗号也视为最终回答，保证循环总能带着真实回答退出
-                appendStep(.finalAnswer, "未检测到结束暗号，按最终回答处理")
-                return (raw, allToolCalls)
+                workingHistory.append(ChatMessage(role: .tool, content: hint))
             }
         }
 
-        let fallback = "已达到最大工具调用轮数（\(Self.maxIterations)）。以上为当前结果。"
+        // 兜底：轮数耗尽仍未输出暗号 → 返回最后一轮思考内容（保证不吞回答）
+        if let last = lastThinking, !last.isEmpty {
+            appendStep(.finalAnswer, "已达轮数上限且未输出暗号，返回最后一轮内容")
+            return (last, allToolCalls)
+        }
+
+        let fallback = "已达到最大思考轮数（\(Self.maxIterations)）。以上为当前结果。"
         appendStep(.finalAnswer, fallback)
         return (fallback, allToolCalls)
     }
@@ -168,7 +179,8 @@ final class AgentService: ObservableObject {
         3. 需要查数据/算数/操作时才调用工具；否则直接结束（见下方结束暗号）。
 
         ## 多轮思考与执行
-        你可以连续进行多轮：每轮调用一个工具 → 观察返回的工具结果 → 再决定调用下一个工具或结束。
+        你可以连续多轮：每轮可以调用一个工具，也可以输出一段纯思考内容（不带暗号）——
+        系统会自动让你继续思考，你的思考会被保留。观察工具结果后再决定下一步。
 
         ## 结束暗号（重要！）
         当你已经收集到足够信息、准备给出最终回答时，必须先输出结束暗号：
@@ -176,7 +188,7 @@ final class AgentService: ObservableObject {
         \(Self.endSignal)
 
         然后紧接着输出最终回答正文（正常中文）。
-        暗号是循环结束的唯一信号：不输出暗号、又不输出合法工具 JSON，会被视为无效输出。
+        暗号是循环结束的唯一信号：只要不输出暗号，系统就会认为你仍在思考并让你继续。
 
         ## 工具列表
         \(catalog)
@@ -250,6 +262,15 @@ final class AgentService: ObservableObject {
         if result.count <= maxLength { return result }
         let head = String(result.prefix(maxLength))
         return head + "\n…(结果过长，已截断)"
+    }
+
+    /// 步骤面板里展示的思考摘要（截断，避免刷屏）。
+    private static func brief(_ text: String, maxLength: Int = 300) -> String {
+        let oneLine = text
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "\n", with: " ")
+        guard oneLine.count > maxLength else { return oneLine }
+        return String(oneLine.prefix(maxLength)) + "…"
     }
 
     /// 粗略提取顶层平衡的 {...} 子串
