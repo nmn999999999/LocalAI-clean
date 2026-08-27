@@ -309,10 +309,8 @@ int llama_bridge_chat(llama_bridge * b,
         for (auto & e : p) img_paths.push_back(e.get<std::string>());
     } catch (...) {}
 
-    // 拆分历史与最后一条消息（模板模式用 history + new_msg；拼接 fallback 用 all）
+    // history 仅用于决定是否在 tokenize 时加 BOS；模板格式化使用完整消息列表 all
     std::vector<common_chat_msg> history(all.begin(), all.end() - 1);
-    common_chat_msg new_msg = all.back();
-    if (new_msg.role != "user") new_msg.role = "user";
     bool add_bos = history.empty();
 
     std::string marker;
@@ -323,13 +321,19 @@ int llama_bridge_chat(llama_bridge * b,
         std::string injected;
         for (size_t i = 0; i < img_paths.size(); i++) injected += marker + "\n";
         all.back().content = injected + all.back().content;
-        new_msg.content = all.back().content;
     }
 
     // 优先用模型自带的 chat template（效果最好）；无模板模型才回退到拼接模式
+    // 注意：必须用 common_chat_templates_apply 格式化【完整】历史，
+    // common_chat_format_single 只返回增量 diff（依赖 KV cache 保留历史），
+    // 与本实现的每轮 KV 清理策略不兼容，会导致多轮上下文丢失。
     std::string formatted;
     if (b->tmpls) {
-        formatted = common_chat_format_single(b->tmpls.get(), history, new_msg, true, b->use_jinja);
+        common_chat_templates_inputs inputs;
+        inputs.messages = all;
+        inputs.add_generation_prompt = true;
+        inputs.use_jinja = b->use_jinja;
+        formatted = common_chat_templates_apply(b->tmpls.get(), inputs).prompt;
     } else {
         formatted = build_concat_prompt(all);
     }
