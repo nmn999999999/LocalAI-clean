@@ -432,30 +432,8 @@ enum BuiltInTools {
         guard let query = arguments["query"] as? String, !query.isEmpty else {
             return "错误: 缺少 query 参数"
         }
-        guard let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
-              let url = URL(string:
-                "https://zh.wikipedia.org/w/api.php?action=opensearch&format=json&limit=3&search=\(encoded)") else {
-            return "无法构造搜索请求"
-        }
-        var request = URLRequest(url: url)
-        request.timeoutInterval = 10
-        request.setValue("LocalAI-iOS/1.0", forHTTPHeaderField: "User-Agent")
-        do {
-            let (data, _) = try await URLSession.shared.data(for: request)
-            guard let arr = try? JSONSerialization.jsonObject(with: data) as? [Any],
-                  arr.count >= 4,
-                  let titles = arr[1] as? [String],
-                  let urls = arr[3] as? [String] else {
-                return "搜索无结果"
-            }
-            var lines: [String] = []
-            for i in 0..<min(titles.count, urls.count) {
-                lines.append("\(i + 1). \(titles[i])\n   \(urls[i])")
-            }
-            return lines.isEmpty ? "未找到与「\(query)」相关的结果" : lines.joined(separator: "\n")
-        } catch {
-            return "搜索失败: \(error.localizedDescription)"
-        }
+        // 优先 SearXNG（自托管搜索服务，可在设置中配置），失败自动回退维基百科
+        return await SearchService.search(query: query, settings: SettingsStorage.shared.settings)
     }
 
     // MARK: - 安全数学表达式求值（Shunting-yard + RPN，纯 Swift 无崩溃风险）

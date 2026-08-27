@@ -287,22 +287,8 @@ object BuiltInTools {
 
     private suspend fun executeWebSearch(arguments: Map<String, Any?>): String {
         val query = arguments["query"] as? String ?: return "错误: 缺少 query 参数"
-        val encoded = java.net.URLEncoder.encode(query, "UTF-8")
-        val url = "https://zh.wikipedia.org/w/api.php?action=opensearch&format=json&limit=3&search=$encoded"
-        return runCatching {
-            val conn = java.net.URL(url).openConnection() as java.net.HttpURLConnection
-            conn.connectTimeout = 10000
-            conn.readTimeout = 10000
-            conn.setRequestProperty("User-Agent", "LocalAI-Android/1.0")
-            val body = conn.inputStream.bufferedReader().readText()
-            val arr = org.json.JSONArray(body)
-            val titles = arr.optJSONArray(1) ?: return@runCatching "搜索无结果"
-            val urls = arr.optJSONArray(3)
-            if (titles.length() == 0) return@runCatching "未找到与「$query」相关的结果"
-            (0 until titles.length()).joinToString("\n") { i ->
-                "${i + 1}. ${titles.getString(i)}\n   ${urls?.optString(i) ?: ""}"
-            }
-        }.getOrElse { "搜索失败: ${it.message}" }
+        // 优先 SearXNG（自托管搜索服务，可在设置中配置），失败自动回退维基百科
+        return SearchService.search(query, com.localai.app.store.SettingsStorage.settings)
     }
 }
 

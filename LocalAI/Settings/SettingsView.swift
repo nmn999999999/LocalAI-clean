@@ -13,6 +13,7 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 20) {
                     generationCard
                     systemPromptCard
+                    searchCard
                     aboutCard
                     dangerZone
                 }
@@ -84,6 +85,42 @@ struct SettingsView: View {
                 .lineLimit(3...6)
                 .padding(10)
                 .background(.quaternary, in: .rect(cornerRadius: 12))
+            }
+        }
+    }
+
+    // MARK: - 搜索服务
+
+    private var searchCard: some View {
+        GlassCard {
+            VStack(alignment: .leading, spacing: 12) {
+                SectionHeader(title: "搜索服务", systemImage: "magnifyingglass")
+
+                Picker("搜索引擎", selection: $storage.settings.searchEngine) {
+                    Text("SearXNG（自托管）").tag("searxng")
+                    Text("维基百科（内置）").tag("wikipedia")
+                }
+                .pickerStyle(.segmented)
+
+                if storage.settings.searchEngine == "searxng" {
+                    TextField(
+                        "SearXNG 实例地址，如 https://searx.be",
+                        text: $storage.settings.searxngURL
+                    )
+                    .keyboardType(.URL)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .padding(10)
+                    .background(.quaternary, in: .rect(cornerRadius: 12))
+                }
+
+                Text("""
+                供 Agent 的 web_search 工具使用。SearXNG 是开源元搜索服务（github.com/searxng/searxng），可自建并聚合 Google/Bing/百度等：
+                docker run -p 8080:8080 searxng/searxng
+                自建后填 http://<你的IP>:8080。SearXNG 不可用时自动回退维基百科。
+                """)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
             }
         }
     }

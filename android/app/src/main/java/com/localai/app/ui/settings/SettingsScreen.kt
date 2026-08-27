@@ -85,6 +85,45 @@ fun SettingsScreen(modifier: Modifier = Modifier) {
         }
 
         Card {
+            Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("搜索服务", style = MaterialTheme.typography.titleSmall)
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("搜索引擎", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                    androidx.compose.material3.FilterChip(
+                        selected = settings.searchEngine == "searxng",
+                        onClick = { settings = settings.copy(searchEngine = "searxng") },
+                        label = { Text("SearXNG（自托管）") },
+                    )
+                    Spacer(Modifier.padding(4.dp))
+                    androidx.compose.material3.FilterChip(
+                        selected = settings.searchEngine == "wikipedia",
+                        onClick = { settings = settings.copy(searchEngine = "wikipedia") },
+                        label = { Text("维基百科（内置）") },
+                    )
+                }
+
+                if (settings.searchEngine == "searxng") {
+                    var url by remember { mutableStateOf(settings.searxngURL) }
+                    OutlinedTextField(
+                        value = url,
+                        onValueChange = { url = it; settings = settings.copy(searxngURL = it) },
+                        label = { Text("SearXNG 实例地址") },
+                        placeholder = { Text("https://searx.be 或 http://192.168.1.10:8080") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+
+                Text(
+                    "供 Agent 的 web_search 工具使用。SearXNG 是开源元搜索服务（github.com/searxng/searxng），可自建并聚合 Google/Bing/百度等：docker run -p 8080:8080 searxng/searxng。SearXNG 不可用时自动回退维基百科。",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+
+        Card {
             Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("关于", style = MaterialTheme.typography.titleSmall)
                 Text("推理引擎: llama.cpp (GGUF) + mtmd 多模态", style = MaterialTheme.typography.bodySmall)

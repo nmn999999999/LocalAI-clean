@@ -116,6 +116,10 @@ struct ModelSettings: Codable, Sendable {
     var systemPrompt: String
     /// GPU offload 层数。0 = 纯 CPU（iPhone 上最稳定）；>0 部分/全部层走 Metal。
     var gpuLayers: Int
+    /// 搜索服务："searxng"（自托管 SearXNG，可聚合 Google/Bing/百度等）或 "wikipedia"（内置回退）
+    var searchEngine: String
+    /// SearXNG 实例地址（如 https://searx.be 或自建 http://192.168.1.10:8080）
+    var searxngURL: String
 
     init(
         temperature: Double = 0.7,
@@ -124,7 +128,9 @@ struct ModelSettings: Codable, Sendable {
         maxTokens: Int = 2048,
         contextLength: Int = 4096,
         systemPrompt: String = "你是一个有帮助的AI助手。请用中文回答。",
-        gpuLayers: Int = 0
+        gpuLayers: Int = 0,
+        searchEngine: String = "wikipedia",
+        searxngURL: String = "https://searx.be"
     ) {
         self.temperature = temperature
         self.topP = topP
@@ -133,13 +139,16 @@ struct ModelSettings: Codable, Sendable {
         self.contextLength = contextLength
         self.systemPrompt = systemPrompt
         self.gpuLayers = gpuLayers
+        self.searchEngine = searchEngine
+        self.searxngURL = searxngURL
     }
 
     static let `default` = ModelSettings()
 
     // 兼容旧存档：新字段缺失时使用默认值，避免整个设置被重置
     enum CodingKeys: String, CodingKey {
-        case temperature, topP, topK, maxTokens, contextLength, systemPrompt, gpuLayers
+        case temperature, topP, topK, maxTokens, contextLength, systemPrompt,
+             gpuLayers, searchEngine, searxngURL
     }
 
     init(from decoder: Decoder) throws {
@@ -152,6 +161,8 @@ struct ModelSettings: Codable, Sendable {
         systemPrompt = try c.decodeIfPresent(String.self, forKey: .systemPrompt)
             ?? "你是一个有帮助的AI助手。请用中文回答。"
         gpuLayers = try c.decodeIfPresent(Int.self, forKey: .gpuLayers) ?? 0
+        searchEngine = try c.decodeIfPresent(String.self, forKey: .searchEngine) ?? "wikipedia"
+        searxngURL = try c.decodeIfPresent(String.self, forKey: .searxngURL) ?? "https://searx.be"
     }
 
     func encode(to encoder: Encoder) throws {
@@ -163,5 +174,7 @@ struct ModelSettings: Codable, Sendable {
         try c.encode(contextLength, forKey: .contextLength)
         try c.encode(systemPrompt, forKey: .systemPrompt)
         try c.encode(gpuLayers, forKey: .gpuLayers)
+        try c.encode(searchEngine, forKey: .searchEngine)
+        try c.encode(searxngURL, forKey: .searxngURL)
     }
 }

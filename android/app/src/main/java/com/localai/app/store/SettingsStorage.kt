@@ -31,6 +31,8 @@ object SettingsStorage {
                     contextLength = o.optInt("contextLength", 4096),
                     systemPrompt = o.optString("systemPrompt", "你是一个有帮助的AI助手。请用中文回答。"),
                     gpuLayers = o.optInt("gpuLayers", 0),
+                    searchEngine = o.optString("searchEngine", "wikipedia"),
+                    searxngURL = o.optString("searxngURL", "https://searx.be"),
                 )
             }.getOrElse { ModelSettings() }
         }
@@ -44,6 +46,8 @@ object SettingsStorage {
                 put("contextLength", value.contextLength)
                 put("systemPrompt", value.systemPrompt)
                 put("gpuLayers", value.gpuLayers)
+                put("searchEngine", value.searchEngine)
+                put("searxngURL", value.searxngURL)
             }
             prefs.edit().putString(KEY, o.toString()).apply()
         }
