@@ -21,6 +21,10 @@ object AgentService {
 
     const val SOFT_ITERATION_LIMIT = 50
 
+    /** 工作历史上限（条数）。超过后丢弃最旧的对话消息（保留 system 工具说明），
+     *  防止超长 Agent 会话把 prompt 撑爆上下文、并降低反复重编码的开销。 */
+    const val MAX_WORKING_MESSAGES = 48
+
     data class Step(val id: Long, val kind: Kind, val detail: String) {
         enum class Kind { THINKING, EXECUTING, RESULT, FINAL_ANSWER }
     }
@@ -71,7 +75,7 @@ object AgentService {
                 // 超过软上限仍未结束：优雅退出，返回最后一轮内容
                 if (iteration > SOFT_ITERATION_LIMIT) break
 
-                val promptMessages = withToolInstructions(workingHistory)
+                val promptMessages = withToolInstructions(trimmedHistory(workingHistory))
                 val raw = try {
                     val sb = StringBuilder()
                     LLMService.streamChat(promptMessages, settings)
@@ -165,6 +169,25 @@ object AgentService {
 
     fun reset() {
         _steps.value = emptyList()
+    }
+
+    /** 把工作历史裁剪到最多 [MAX_WORKING_MESSAGES] 条：保留第一条 system 消息（工具说明所在），
+     *  丢弃最旧的对话消息，保留最近的上下文。返回新列表，不修改入参。 */
+    private fun trimmedHistory(history: List<ChatMessage>): List<ChatMessage> {
+        if (history.size <= MAX_WORKING_MESSAGES) return history
+
+        var system: ChatMessage? = null
+        val rest = mutableListOf<ChatMessage>()
+        for (m in history) {
+            if (m.role == MessageRole.SYSTEM && system == null) {
+                system = m          // system 只保留第一条（含工具说明）
+            } else {
+                rest.add(m)
+            }
+        }
+        val keep = maxOf(0, MAX_WORKING_MESSAGES - if (system != null) 1 else 0)
+        val tail = rest.takeLast(keep)
+        return (system?.let { listOf(it) } ?: emptyList()) + tail
     }
 
     // MARK: - 工具说明注入

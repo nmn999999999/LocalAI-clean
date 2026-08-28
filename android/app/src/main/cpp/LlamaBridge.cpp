@@ -32,6 +32,7 @@ struct llama_bridge {
 
     int    n_threads = 4;
     int    n_batch   = 512;
+    int    n_ctx     = 4096;   // 上下文窗口（token 容量），用于 prompt 超长护栏
     int    max_tokens = 512;
     float  temp = 0.8f;
     int    top_k = 40;
@@ -133,6 +134,7 @@ bool llama_bridge_load_model(llama_bridge * b,
 
     struct llama_context_params cparams = llama_context_default_params();
     cparams.n_ctx = n_ctx > 0 ? (uint32_t)n_ctx : 4096;
+    b->n_ctx = (int)cparams.n_ctx;   // 记录真实窗口，供后续护栏使用
     cparams.n_threads = b->n_threads;
     cparams.n_threads_batch = b->n_threads;
     // Metal 后端上 Flash Attention 的稳定性问题：先关闭，换取可靠解码
@@ -220,9 +222,12 @@ static llama_token sample_token(llama_bridge * b, float * logits) {
 // ---- text-only path (no mmproj): tokenize + decode + generate ----
 // 返回 llama_decode 的返回码（0 = 成功）
 static int eval_tokens(llama_bridge * b, const std::vector<llama_token> & toks, bool logits_last) {
+    // 防御：batch 容量 = n_ctx，绝不允许超出，否则 common_batch_add 触发越界断言/abort。
+    const size_t cap = (b->n_ctx > 0) ? (size_t)b->n_ctx : toks.size();
+    const size_t n   = std::min(toks.size(), cap);
     common_batch_clear(b->batch);
-    for (size_t i = 0; i < toks.size(); i++) {
-        common_batch_add(b->batch, toks[i], (llama_pos)i, {0}, logits_last && (i + 1 == toks.size()));
+    for (size_t i = 0; i < n; i++) {
+        common_batch_add(b->batch, toks[i], (llama_pos)i, {0}, logits_last && (i + 1 == n));
     }
     return llama_decode(b->ctx, b->batch);
 }
@@ -403,6 +408,11 @@ int llama_bridge_chat(llama_bridge * b,
 
     // ----- text-only path -----
     std::vector<llama_token> toks = common_tokenize(b->ctx, formatted, add_bos, true);
+    // 护栏：prompt 的 token 数不得超过上下文窗口，否则 common_batch_add 越界触发 abort。
+    // 超出时丢弃最旧的 token、保留最近的上下文（本桥为无状态，每轮重编码完整历史）。
+    if (b->n_ctx > 0 && (int)toks.size() > b->n_ctx) {
+        toks.erase(toks.begin(), toks.end() - b->n_ctx);
+    }
     int rc = eval_tokens(b, toks, true);
     if (rc != 0) {
         set_error(b, with_log(b, "prompt 解码失败 (ret=" + std::to_string(rc) + ")"));
