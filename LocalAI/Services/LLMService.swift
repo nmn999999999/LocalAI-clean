@@ -105,11 +105,12 @@ final class LLMService: ObservableObject {
 
     func streamChat(
         history: [ChatMessage],
-        settings: ModelSettings
+        settings: ModelSettings,
+        images: [CGImage] = []
     ) -> AsyncThrowingStream<String, Error> {
         let engine = tryRequireEngine()
         let msgs = toEngineMessages(history, settings: settings)
-        return engine.stream(messages: msgs, settings: settings, images: [])
+        return engine.stream(messages: msgs, settings: settings, images: images)
     }
 
     /// 供 Agent 使用：带可选图片的单轮流式调用，聚合返回完整文本。

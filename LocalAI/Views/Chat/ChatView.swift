@@ -307,7 +307,7 @@ struct ChatView: View {
 
             var full = ""
             do {
-                let stream = llmService.streamChat(history: history, settings: settings)
+                let stream = llmService.streamChat(history: history, settings: settings, images: images.compactMap { $0.cgImage })
                 for try await token in stream {
                     full += token
                     updateAssistant(id: assistantMsg.id, content: full)

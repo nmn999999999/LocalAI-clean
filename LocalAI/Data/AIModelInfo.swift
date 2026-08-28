@@ -19,8 +19,10 @@ struct AIModelInfo: Identifiable, Hashable, Codable {
         case alpaca
     }
 
-    var huggingFaceURL: URL? {
-        URL(string: "https://huggingface.co/\(repo)/resolve/main/\(fileName)")
+    /// 下载地址。使用国内可直连的 HuggingFace 镜像（hf-mirror.com），
+    /// 避免 huggingface.co 在国内网络环境下拉不动/被墙。
+    var downloadURL: URL? {
+        URL(string: "https://hf-mirror.com/\(repo)/resolve/main/\(fileName)")
     }
 
     static let catalog: [AIModelInfo] = [
@@ -90,7 +92,23 @@ struct AIModelInfo: Identifiable, Hashable, Codable {
             supportsMultimodal: false,
             supportsToolCalling: true
         ),
+        AIModelInfo(
+            id: "openelm-1.1b-q4km",
+            name: "OpenELM 1.1B (Apple)",
+            repo: "RichardErkhov/apple_-_OpenELM-1_1B-Instruct-gguf",
+            fileName: "OpenELM-1_1B-Instruct.Q4_K_M.gguf",
+            sizeDescription: "~0.63 GB",
+            description: "Apple 官方开源高效语言模型，体量极小，任意 iPhone 都能离线跑（首启默认自动下载并加载）",
+            templateType: .chatML,
+            supportsMultimodal: false,
+            supportsToolCalling: false
+        ),
     ]
+
+    /// 首启时优先下载并自动加载的默认模型（Apple OpenELM：体积最小、兼容最好、国内镜像可直连）。
+    static var defaultModel: AIModelInfo {
+        catalog.first { $0.id == "openelm-1.1b-q4km" } ?? catalog[0]
+    }
 }
 
 struct DownloadedModel: Identifiable, Hashable {

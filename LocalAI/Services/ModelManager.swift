@@ -10,6 +10,8 @@ final class ModelManager: ObservableObject {
     /// 下载进度（key = AIModelInfo.id 或自定义 key）
     @Published private(set) var progress: [String: Double] = [:]
     @Published var lastError: String?
+    /// 最近一次「下载完成」的模型 id（供启动引导在默认模型下载完后自动加载）。
+    @Published private(set) var lastCompletedDownloadID: String?
 
     private var activeTasks: [String: Task<Void, Never>] = [:]
     private var sessions: [String: URLSession] = [:]
@@ -102,7 +104,7 @@ final class ModelManager: ObservableObject {
     // MARK: - 下载（HuggingFace）
 
     func download(_ model: AIModelInfo) {
-        guard let url = model.huggingFaceURL else { return }
+        guard let url = model.downloadURL else { return }
         startDownload(id: model.id, name: model.name, fileName: model.fileName, from: url)
     }
 
@@ -144,6 +146,7 @@ final class ModelManager: ObservableObject {
                         sizeBytes: ModelManager.shared.fileSize(at: destination),
                         addedAt: Date()
                     ))
+                    ModelManager.shared.lastCompletedDownloadID = id
                 }
             } catch {
                 Task { @MainActor in
