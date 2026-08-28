@@ -18,11 +18,21 @@ struct ChatView: View {
     @State private var errorMessage: String?
     @State private var isGenerating = false
     @State private var generationTask: Task<Void, Never>?
+    @State private var showSearch = false
+    @State private var searchText = ""
+    @State private var searchResults: [ChatStore.SearchResult] = []
+    @State private var searchTask: Task<Void, Never>?
+    /// Agent 流式 token 缓冲区（按气泡 id），配合时间节流减少重渲染
+    @State private var agentTokenBuffers: [UUID: String] = [:]
+    @State private var agentLastFlush = Date.distantPast
     @FocusState private var inputFocused: Bool
 
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
+                if showSearch {
+                    searchBar
+                }
                 messageList
                 if llmService.isModelReady {
                     agentStepsBar
@@ -76,10 +86,11 @@ struct ChatView: View {
             .defaultScrollAnchor(.bottom)
             // 在消息列表上下滑即可收起键盘
             .scrollDismissesKeyboard(.interactively)
-            .onTapGesture {
-                // 点消息区域空白处收起键盘
+            // 点击消息区域任意空白处（含气泡间隙）收起键盘；
+            // simultaneousGesture 不阻挡气泡内按钮点击
+            .simultaneousGesture(TapGesture().onEnded {
                 inputFocused = false
-            }
+            })
         }
     }
 
@@ -106,11 +117,103 @@ struct ChatView: View {
         .padding(.top, 120)
     }
 
+    // MARK: - 搜索栏
+
+    private var searchBar: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Image(systemName: "magnifyingglass")
+                    .foregroundStyle(.secondary)
+                TextField("搜索消息...", text: $searchText)
+                    .textFieldStyle(.plain)
+                    .onChange(of: searchText) { _, newValue in
+                        // 防抖：停止输入 200ms 后再执行全量搜索，避免每个按键都扫描所有会话
+                        searchTask?.cancel()
+                        searchTask = Task {
+                            try? await Task.sleep(nanoseconds: 200_000_000)
+                            guard !Task.isCancelled else { return }
+                            searchResults = chatStore.search(query: newValue)
+                        }
+                    }
+                if !searchText.isEmpty {
+                    Button {
+                        searchText = ""
+                        searchResults = []
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(Color(.systemBackground))
+            .cornerRadius(10)
+            .padding(.horizontal, 14)
+            .padding(.top, 8)
+
+            if !searchResults.isEmpty {
+                ScrollView {
+                    LazyVStack(spacing: 8) {
+                        ForEach(searchResults.prefix(20)) { result in
+                            searchResultRow(result)
+                        }
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                }
+                .frame(maxHeight: 200)
+                .background(Color(.systemBackground))
+            }
+        }
+        .background(Color(.systemGroupedBackground))
+    }
+
+    private func searchResultRow(_ result: ChatStore.SearchResult) -> some View {
+        Button {
+            // 跳转到对应对话
+            chatStore.currentConversationID = result.conversationID
+            showSearch = false
+            searchText = ""
+            searchResults = []
+        } label: {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(result.conversationTitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                Text(excerpt(from: result.messageContent, around: result.matchRange))
+                    .font(.subheadline)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(8)
+            .background(Color(.tertiarySystemBackground))
+            .cornerRadius(8)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func excerpt(from text: String, around range: NSRange) -> String {
+        let nsText = text as NSString
+        let start = max(0, range.location - 20)
+        let end = min(nsText.length, range.location + range.length + 40)
+        let excerpt = nsText.substring(with: NSRange(location: start, length: end - start))
+        
+        var result = ""
+        if start > 0 { result += "..." }
+        result += excerpt
+        if end < nsText.length { result += "..." }
+        return result
+    }
+
     // MARK: - Agent 步骤条
 
     @ViewBuilder
     private var agentStepsBar: some View {
-        if !agentService.steps.isEmpty {
+        let settings = SettingsStorage.shared.settings
+        if settings.showToolCalls && !agentService.steps.isEmpty {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
                     ForEach(agentService.steps) { step in
@@ -225,6 +328,19 @@ struct ChatView: View {
             }
         }
         ToolbarItemGroup(placement: .topBarTrailing) {
+            Button {
+                withAnimation {
+                    showSearch.toggle()
+                    if !showSearch {
+                        searchText = ""
+                        searchResults = []
+                    }
+                }
+            } label: {
+                Image(systemName: showSearch ? "magnifyingglass" : "magnifyingglass")
+                    .symbolEffect(.bounce, value: showSearch)
+            }
+            
             Menu {
                 ForEach(modelManager.downloadedModels) { model in
                     Button {
@@ -270,7 +386,7 @@ struct ChatView: View {
         inputText = ""
         attachments = []
         selectedItems = []
-        inputFocused = false // 发送后收起键盘
+        inputFocused = false
 
         var conv = chatStore.currentOrNew
         conv.messages.append(ChatMessage(role: .user, content: text, images: images))
@@ -279,7 +395,6 @@ struct ChatView: View {
 
         let settings = SettingsStorage.shared.settings
 
-        // 历史快照：agent 模式不插入占位气泡（由桥逐轮建气泡）；普通模式先插一条占位气泡逐字流式。
         let history: [ChatMessage]
         let assistantMsg: ChatMessage?
         if isAgentMode {
@@ -301,8 +416,6 @@ struct ChatView: View {
             }
 
             if isAgentMode {
-                // 流式桥：每一轮迭代实时建气泡 / 追加 token / 挂工具调用 / 结束。
-                // 气泡直接透传原始 token（含 <think> 标签），MessageBubble 自动解析思考流与正文流。
                 let bridge = AgentService.AgentDisplayBridge(
                     beginIteration: {
                         let m = ChatMessage(role: .assistant, content: "", isStreaming: true, isAgentRound: true)
@@ -332,11 +445,17 @@ struct ChatView: View {
 
             guard let assistantMsg else { return }
             var full = ""
+            var lastFlush = Date.distantPast
             do {
                 let stream = llmService.streamChat(history: history, settings: settings, images: images.compactMap { $0.cgImage })
                 for try await token in stream {
                     full += token
-                    updateAssistant(id: assistantMsg.id, content: full)
+                    // 按时间节流刷新 UI（~80ms），避免高速 token 流频繁触发全量重渲染
+                    let now = Date()
+                    if now.timeIntervalSince(lastFlush) >= 0.08 {
+                        updateAssistant(id: assistantMsg.id, content: full)
+                        lastFlush = now
+                    }
                 }
                 updateAssistant(id: assistantMsg.id, content: full, streaming: false)
             } catch {
@@ -348,7 +467,7 @@ struct ChatView: View {
         }
     }
 
-    /// 原位更新流式 assistant 消息（每来一个 token 调用一次）。
+    /// 原位更新流式 assistant 消息（批量更新减少触发频率）。
     private func updateAssistant(
         id: UUID,
         content: String,
@@ -360,7 +479,6 @@ struct ChatView: View {
         conv.messages[idx].content = content
         conv.messages[idx].toolCalls = toolCalls
         conv.messages[idx].isStreaming = streaming
-        conv.messages[idx].timestamp = Date()
         chatStore.upsert(conv)
     }
 
@@ -373,10 +491,21 @@ struct ChatView: View {
     // MARK: - Agent 流式辅助（逐轮气泡）
 
     /// 给指定 assistant 气泡追加一个原始 token（含 <think> 标签，气泡自动解析思考/正文）。
+    /// token 先入缓冲区，按时间节流（~80ms）批量刷入气泡，减少流式期间的全量重渲染。
     private func appendAssistantToken(id: UUID, token: String) {
+        agentTokenBuffers[id, default: ""] += token
+        let now = Date()
+        guard now.timeIntervalSince(agentLastFlush) >= 0.08 else { return }
+        agentLastFlush = now
+        flushAgentTokenBuffer(id: id)
+    }
+
+    /// 把指定气泡缓冲区里的 token 一次性追加到消息内容。
+    private func flushAgentTokenBuffer(id: UUID) {
+        guard let buffered = agentTokenBuffers.removeValue(forKey: id), !buffered.isEmpty else { return }
         var conv = chatStore.currentOrNew
         guard let idx = conv.messages.firstIndex(where: { $0.id == id }) else { return }
-        conv.messages[idx].content += token
+        conv.messages[idx].content += buffered
         chatStore.upsert(conv)
     }
 
@@ -390,6 +519,8 @@ struct ChatView: View {
 
     /// 结束指定气泡的流式状态（isStreaming = false），使其可被落盘与正常渲染。
     private func finalizeMessage(id: UUID) {
+        // 先刷出缓冲区中尚未上屏的 token，再结束流式
+        flushAgentTokenBuffer(id: id)
         var conv = chatStore.currentOrNew
         guard let idx = conv.messages.firstIndex(where: { $0.id == id }) else { return }
         conv.messages[idx].isStreaming = false

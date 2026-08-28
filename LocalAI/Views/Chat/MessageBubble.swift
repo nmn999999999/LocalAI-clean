@@ -6,6 +6,20 @@ import UIKit
 struct MessageBubble: View {
     let message: ChatMessage
     @State private var copied = false
+    @ObservedObject private var settings = SettingsStorage.shared
+
+    /// 图片解码缓存：流式期间气泡会频繁重算 body，避免每次都重新解码 JPEG 数据
+    private static let imageCache = NSCache<NSString, UIImage>()
+
+    /// 解码消息内嵌图片（带缓存，key = 消息id-图片序号）
+    private func cachedImage(at index: Int) -> UIImage? {
+        let key = "\(message.id.uuidString)-\(index)" as NSString
+        if let hit = Self.imageCache.object(forKey: key) { return hit }
+        guard index < message.images.count,
+              let img = UIImage(data: message.images[index].data) else { return nil }
+        Self.imageCache.setObject(img, forKey: key)
+        return img
+    }
 
     var body: some View {
         HStack(alignment: .bottom, spacing: 8) {
@@ -40,8 +54,10 @@ struct MessageBubble: View {
 
         case .assistant:
             VStack(alignment: .leading, spacing: 6) {
-                toolCallChips
-                if let think = message.thinkContent, !think.isEmpty {
+                if settings.settings.showToolCalls {
+                    toolCallChips
+                }
+                if settings.settings.showThinking, let think = message.thinkContent, !think.isEmpty {
                     ThinkSection(think: think, isThinking: message.isThinking)
                 }
                 let displayText = message.isAgentRound ? AgentService.cleanDisplayText(message.visibleContent) : message.visibleContent
@@ -83,7 +99,7 @@ struct MessageBubble: View {
         HStack(spacing: 6) {
             ForEach(message.images.indices, id: \.self) { idx in
                 #if canImport(UIKit)
-                if let img = UIImage(data: message.images[idx].data) {
+                if let img = cachedImage(at: idx) {
                     Image(uiImage: img)
                         .resizable()
                         .scaledToFill()
