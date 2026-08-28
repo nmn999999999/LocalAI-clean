@@ -48,6 +48,43 @@ object AgentService {
         return cleaned.ifEmpty { null }
     }
 
+    /** 去除推理模型（DeepSeek-R1 / Qwen3 等）的 `<think>…</think>` / `<reasoning>…</reasoning>` 块，
+     *  含未闭合的情况（生成被 max_tokens 截断或中止时常见）。
+     *  Agent 模式下模型常把工具 JSON / 最终答案整段裹在思考块里，
+     *  若不剥离，`extractFinalAnswer` / `parseToolCall` 会把答案误判为"思考内容"而吞掉正文。 */
+    private fun stripThinkTags(text: String): String {
+        var result = text
+        while (true) {
+            val t = result.indexOf("<think>", ignoreCase = true)
+            val r = result.indexOf("<reasoning>", ignoreCase = true)
+            val open = when {
+                t >= 0 && r >= 0 -> minOf(t, r)
+                t >= 0 -> t
+                r >= 0 -> r
+                else -> -1
+            }
+            if (open < 0) break
+            val tagLen = if (result.regionMatches(open, "<think>", 0, 7, ignoreCase = true)) 7 else 11
+            val afterOpen = open + tagLen
+            val tc = result.indexOf("</think>", afterOpen, ignoreCase = true)
+            val rc = result.indexOf("</reasoning>", afterOpen, ignoreCase = true)
+            val close = when {
+                tc >= 0 && rc >= 0 -> minOf(tc, rc)
+                tc >= 0 -> tc
+                rc >= 0 -> rc
+                else -> -1
+            }
+            result = if (close >= 0) {
+                val closeLen = if (result.regionMatches(close, "</think>", 0, 8, ignoreCase = true)) 8 else 12
+                result.removeRange(open, close + closeLen)
+            } else {
+                result = result.removeRange(open, result.length)
+                break
+            }
+        }
+        return result.trim()
+    }
+
     suspend fun run(
         history: List<ChatMessage>,
         settings: ModelSettings,
@@ -86,15 +123,20 @@ object AgentService {
                     return Pair("生成失败: ${e.message}", allToolCalls)
                 }
 
-                // 1) 结束暗号优先：模型已明确表示"信息足够"，立即终止循环
+                // 1) 结束暗号优先：在【原始文本】上检测，避免答案被裹在 <think> 内时
+                //    被提前剥离思考块而连暗号一起丢失。命中后再对最终答案单独剥离思考块，
+                //    保证正文干净、不被当成"思考内容"吞掉。
                 val finalAnswer = extractFinalAnswer(raw)
                 if (finalAnswer != null) {
                     appendStep(Step.Kind.FINAL_ANSWER, "检测到结束暗号，输出最终回答")
-                    return Pair(finalAnswer, allToolCalls)
+                    return Pair(stripThinkTags(finalAnswer), allToolCalls)
                 }
 
+                // 其余路径：推理模型会把工具 JSON 裹在 <think> 里，先剥离思考块再解析
+                val content = stripThinkTags(raw)
+
                 // 2) 有效的工具调用：执行并回填上下文，进入下一轮
-                val call = parseToolCall(raw)
+                val call = parseToolCall(content)
                 if (call != null) {
                     appendStep(Step.Kind.THINKING, "调用工具 ${call.name}(${compactJson(call.arguments)})")
                     appendStep(Step.Kind.EXECUTING, call.name)
@@ -108,18 +150,18 @@ object AgentService {
                     allToolCalls.add(record)
                     appendStep(Step.Kind.RESULT, "${call.name} → $limited")
 
-                    workingHistory.add(ChatMessage(role = MessageRole.ASSISTANT, content = raw, toolCalls = listOf(record)))
+                    workingHistory.add(ChatMessage(role = MessageRole.ASSISTANT, content = content, toolCalls = listOf(record)))
                     workingHistory.add(ChatMessage(role = MessageRole.TOOL, content = "[${call.name} 结果]\n$limited"))
                 } else {
                     // 3) 无暗号、无有效工具调用：视为模型的中间思考，
                     //    自动触发下一轮思考（思考内容展示在步骤里，不被吞掉）。
-                    lastThinking = raw
-                    appendStep(Step.Kind.THINKING, "思考：${brief(raw)}")
+                    lastThinking = content
+                    appendStep(Step.Kind.THINKING, "思考：${brief(content)}")
 
-                    workingHistory.add(ChatMessage(role = MessageRole.ASSISTANT, content = raw))
+                    workingHistory.add(ChatMessage(role = MessageRole.ASSISTANT, content = content))
 
                     // 若看起来是想调工具但 JSON 写坏了，顺带纠正格式
-                    val hint = if (looksLikeToolCall(raw) && looksLikeBrokenJSON(raw)) {
+                    val hint = if (looksLikeToolCall(content) && looksLikeBrokenJSON(content)) {
                         """
                         你的输出看起来想调用工具，但不是合法 JSON。规则：
                         - 调用工具时只输出一个 JSON 对象：{"name": "<工具名>", "arguments": {...}}

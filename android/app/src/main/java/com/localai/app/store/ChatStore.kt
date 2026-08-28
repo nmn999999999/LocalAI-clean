@@ -182,6 +182,10 @@ object ChatStore {
                         toolCalls = calls,
                     )
                 }.toMutableList()
+                // 复位遗留的流式标记：磁盘里不该有"正在生成"的消息。
+                // 若残留 isStreaming == true（旧版 Agent 会话未正确收尾），
+                // 会让 scheduleSave 守卫误判、导致整段对话永不落盘。
+                msgs.forEach { it.isStreaming = false }
                 Conversation(
                     id = o.optString("id"),
                     title = o.optString("title", "新对话"),

@@ -48,6 +48,32 @@ final class AgentService: ObservableObject {
         return cleaned.isEmpty ? nil : cleaned
     }
 
+    /// 去除推理模型（DeepSeek-R1 / Qwen3 等）的 `<think>…</think>` / `<reasoning>…</reasoning>` 块，
+    /// 含未闭合的情况（生成被 max_tokens 截断或中止时常见）。
+    /// Agent 模式下模型常把工具 JSON / 最终答案整段裹在思考块里，
+    /// 若不剥离，`extractFinalAnswer` / `parseToolCall` 会把答案误判为"思考内容"而吞掉正文。
+    static func stripThinkTags(_ text: String) -> String {
+        var result = text
+        var searchFrom = result.startIndex
+        while true {
+            let rest = result[searchFrom...]
+            guard let open = rest.range(of: "<think>", options: [.caseInsensitive])
+                ?? rest.range(of: "<reasoning>", options: [.caseInsensitive])
+            else { break }
+            let afterOpen = open.upperBound
+            if let close = result[afterOpen...].range(of: "</think>", options: [.caseInsensitive])
+                ?? result[afterOpen...].range(of: "</reasoning>", options: [.caseInsensitive]) {
+                result.removeSubrange(open.lowerBound..<close.upperBound)
+                searchFrom = open.lowerBound
+            } else {
+                // 未闭合：删除从 open 到结尾的整段（视为未完成的思考）
+                result.removeSubrange(open.lowerBound..<result.endIndex)
+                break
+            }
+        }
+        return result.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     /// 在对话中执行 Agent 循环，返回最终 assistant 消息内容与全部工具调用记录。
     func run(
         history: [ChatMessage],
@@ -91,14 +117,20 @@ final class AgentService: ObservableObject {
                 return (msg, allToolCalls)
             }
 
-            // 1) 结束暗号优先：模型已明确表示"信息足够，给出最终回答"，立即终止循环
-            if let answer = Self.extractFinalAnswer(from: raw) {
+            // 1) 结束暗号优先：在【原始文本】上检测，避免答案被裹在 <think> 内时
+            //    被提前剥离思考块而连暗号一起丢失。命中后再对最终答案单独剥离思考块，
+            //    保证正文干净、不被当成"思考内容"吞掉。
+            if let pre = Self.extractFinalAnswer(from: raw) {
+                let answer = Self.stripThinkTags(pre)
                 appendStep(.finalAnswer, "检测到结束暗号，输出最终回答")
                 return (answer, allToolCalls)
             }
 
+            // 其余路径：推理模型会把工具 JSON 裹在 <think> 里，先剥离思考块再解析
+            let content = Self.stripThinkTags(raw)
+
             // 2) 有效的工具调用：执行并把结果回填上下文，进入下一轮
-            if let call = Self.parseToolCall(from: raw) {
+            if let call = Self.parseToolCall(from: content) {
                 let argsJSON = Self.compactJSON(call.arguments)
                 appendStep(.thinking, "调用工具 \(call.name)(\(argsJSON))")
                 appendStep(.executing, call.name)
@@ -116,7 +148,7 @@ final class AgentService: ObservableObject {
 
                 // 把工具结果作为新一轮上下文
                 workingHistory.append(
-                    ChatMessage(role: .assistant, content: raw, toolCalls: [record])
+                    ChatMessage(role: .assistant, content: content, toolCalls: [record])
                 )
                 workingHistory.append(
                     ChatMessage(role: .tool, content: "[\(call.name) 结果]\n\(limited)")
@@ -124,15 +156,15 @@ final class AgentService: ObservableObject {
             } else {
                 // 3) 无暗号、无有效工具调用：视为模型的中间思考，
                 //    自动触发下一轮思考（思考内容展示在步骤里，不被吞掉）。
-                lastThinking = raw
-                appendStep(.thinking, "思考：\(Self.brief(raw))")
+                lastThinking = content
+                appendStep(.thinking, "思考：\(Self.brief(content))")
 
-                workingHistory.append(ChatMessage(role: .assistant, content: raw))
+                workingHistory.append(ChatMessage(role: .assistant, content: content))
 
                 // 若看起来是想调工具但 JSON 写坏了，顺带纠正格式
                 let hint: String
-                if Self.looksLikeToolCall(raw, tools: toolsEnabledTools),
-                   Self.looksLikeBrokenJSON(raw) {
+                if Self.looksLikeToolCall(content, tools: toolsEnabledTools),
+                   Self.looksLikeBrokenJSON(content) {
                     hint = """
                     你的输出看起来想调用工具，但不是合法 JSON。规则：
                     - 调用工具时只输出一个 JSON 对象：{"name": "<工具名>", "arguments": {...}}

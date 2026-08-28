@@ -112,7 +112,19 @@ final class ChatStore: ObservableObject {
         guard let data = try? Data(contentsOf: saveURL) else { return }
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        conversations = (try? decoder.decode([Conversation].self, from: data)) ?? []
+        let decoded = (try? decoder.decode([Conversation].self, from: data)) ?? []
+        // 复位遗留的流式标记：磁盘里不该有"正在生成"的消息。
+        // 若历史里残留 isStreaming == true（例如旧版 Agent 会话未正确收尾），
+        // 会让 scheduleSave 守卫误判、导致整段对话永不落盘。
+        conversations = decoded.map { conv in
+            var c = conv
+            c.messages = c.messages.map { m in
+                var mm = m
+                mm.isStreaming = false
+                return mm
+            }
+            return c
+        }
         currentConversationID = conversations.first?.id
     }
 }

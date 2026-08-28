@@ -299,7 +299,9 @@ struct ChatView: View {
                     settings: settings,
                     llm: llmService
                 )
-                updateAssistant(id: assistantMsg.id, content: result.content, toolCalls: result.toolCalls)
+                // 注意：必须显式传 streaming: false，否则 assistant 消息的 isStreaming 永远为 true，
+                // 导致 ChatStore.scheduleSave() 的守卫永久拦截落盘，整段 Agent 会话丢失。
+                updateAssistant(id: assistantMsg.id, content: result.content, toolCalls: result.toolCalls, streaming: false)
                 return
             }
 
