@@ -54,7 +54,7 @@ object LLMService {
                 mmprojPath,
                 SettingsStorage.settings.contextLength,
                 SettingsStorage.settings.gpuLayers,
-                4,
+                inferThreads(),
             )
             if (ok) {
                 synchronized(this) {
@@ -68,6 +68,12 @@ object LLMService {
                 _state.value = State.Failed(err)
             }
         }.start()
+    }
+
+    /** 推理线程数：按设备 CPU 核心数自适应（4..8）。比写死 4 在多数设备明显提速，封顶 8 避免小核调度开销/发热。 */
+    private fun inferThreads(): Int {
+        val cores = Runtime.getRuntime().availableProcessors()
+        return minOf(cores, 8).coerceAtLeast(4)
     }
 
     fun unload() {

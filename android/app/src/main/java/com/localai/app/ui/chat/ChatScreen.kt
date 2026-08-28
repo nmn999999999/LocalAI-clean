@@ -56,6 +56,7 @@ import com.localai.app.agent.AgentService
 import com.localai.app.data.ChatMessage
 import com.localai.app.data.MessageRole
 import com.localai.app.data.ThinkParser
+import com.localai.app.data.ToolCall
 import com.localai.app.llm.LLMService
 import com.localai.app.store.ChatStore
 import com.localai.app.store.ModelManager
@@ -135,11 +136,20 @@ fun ChatScreen(modifier: Modifier = Modifier) {
                 val conv = ChatStore.current
                 conv.messages.add(ChatMessage(role = MessageRole.USER, content = text, images = images))
                 conv.updateTitle()
-                val assistantMsg = ChatMessage(role = MessageRole.ASSISTANT, content = "", isStreaming = true)
-                conv.messages.add(assistantMsg)
+                // 历史快照：agent 模式不插入占位气泡（由 sink 逐轮建气泡）；普通模式先插一条占位气泡逐字流式。
+                val history: List<ChatMessage>
+                val assistantMsg: ChatMessage?
+                if (isAgentMode) {
+                    assistantMsg = null
+                    history = ArrayList(conv.messages)
+                } else {
+                    val m = ChatMessage(role = MessageRole.ASSISTANT, content = "", isStreaming = true)
+                    conv.messages.add(m)
+                    assistantMsg = m
+                    history = conv.messages.filter { it.id != m.id }
+                }
                 conv.modelName = LLMService.loadedModelName
                 ChatStore.upsert(conv)
-                val history = conv.messages.filter { it.id != assistantMsg.id }
                 input = ""
                 attachments = emptyList()
 
@@ -153,29 +163,66 @@ fun ChatScreen(modifier: Modifier = Modifier) {
                 generatingJob = scope.launch(Dispatchers.IO) {
                     try {
                         if (isAgentMode) {
-                            val (content, toolCalls) = AgentService.run(history, settings)
-                            withContext(Dispatchers.Main) {
-                                assistantMsg.content = content
-                                assistantMsg.isStreaming = false
-                                ChatStore.upsert(conv)
+                            // 流式 sink：每一轮迭代实时建气泡 / 追加 token / 挂工具调用 / 结束。
+                            // 气泡直接透传原始 token（含 <think> 标签），MessageBubble 自动解析思考流与正文流。
+                            val sink = object : AgentService.AgentSink {
+                                override suspend fun beginIteration(): ChatMessage {
+                                    val m = ChatMessage(role = MessageRole.ASSISTANT, content = "", isStreaming = true)
+                                    withContext(Dispatchers.Main) {
+                                        conv.messages.add(m)
+                                        ChatStore.upsert(conv)
+                                    }
+                                    return m
+                                }
+
+                                override suspend fun appendToken(message: ChatMessage, token: String) {
+                                    withContext(Dispatchers.Main) {
+                                        val idx = conv.messages.indexOfFirst { it.id == message.id }
+                                        if (idx >= 0) {
+                                            conv.messages[idx].content += token
+                                            ChatStore.upsert(conv)
+                                        }
+                                    }
+                                }
+
+                                override suspend fun attachToolCall(message: ChatMessage, call: ToolCall) {
+                                    withContext(Dispatchers.Main) {
+                                        val idx = conv.messages.indexOfFirst { it.id == message.id }
+                                        if (idx >= 0) {
+                                            conv.messages[idx].toolCalls = conv.messages[idx].toolCalls + call
+                                            ChatStore.upsert(conv)
+                                        }
+                                    }
+                                }
+
+                                override suspend fun endIteration(message: ChatMessage) {
+                                    withContext(Dispatchers.Main) {
+                                        val idx = conv.messages.indexOfFirst { it.id == message.id }
+                                        if (idx >= 0) {
+                                            conv.messages[idx].isStreaming = false
+                                            ChatStore.upsert(conv)
+                                        }
+                                    }
+                                }
                             }
+                            AgentService.run(history, settings, sink)
                         } else {
                             val sb = StringBuilder()
                             LLMService.streamChat(history, settings, imagePaths).collect { token ->
                                 sb.append(token)
                                 withContext(Dispatchers.Main) {
-                                    assistantMsg.content = sb.toString()
+                                    assistantMsg?.content = sb.toString()
                                     ChatStore.upsert(conv)
                                 }
                             }
                             withContext(Dispatchers.Main) {
-                                assistantMsg.isStreaming = false
+                                assistantMsg?.isStreaming = false
                                 ChatStore.upsert(conv)
                             }
                         }
                     } catch (e: Exception) {
                         withContext(Dispatchers.Main) {
-                            assistantMsg.isStreaming = false
+                            assistantMsg?.isStreaming = false
                             ChatStore.upsert(conv)
                         }
                     } finally {
@@ -263,11 +310,21 @@ private fun MessageBubble(message: ChatMessage) {
                 }
             } else {
                 message.toolCalls.forEach { call ->
-                    Text(
-                        text = "🔧 工具调用: ${call.name}",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.secondary,
-                    )
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        Text(
+                            text = "🔧 工具调用: ${call.name}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.secondary,
+                        )
+                        call.result?.let { r ->
+                            val preview = r.lineSequence().firstOrNull()?.take(80) ?: r.take(80)
+                            Text(
+                                text = "→ $preview",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
                 }
                 val think = ThinkParser.thinkContent(message.content)
                 if (!think.isNullOrEmpty()) {

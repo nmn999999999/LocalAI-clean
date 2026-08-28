@@ -15,7 +15,12 @@ final class LlamaSwiftEngine: LLMEngine, @unchecked Sendable {
     // iOS 上 Metal 后端存在兼容性问题（解码失败/输出退化），默认纯 CPU 推理最稳定。
     // 需要加速可在「设置」里调高 GPU 层数。
     private let nGpuLayers: Int32
-    private let nThreads: Int32 = 4
+    // 推理线程数：按设备核心数自适应（4..8）。比写死 4 在多数 iPhone 上明显提速，
+    // 同时封顶 8 避免小核过多引发的调度开销/发热。
+    private let nThreads: Int32 = {
+        let cores = ProcessInfo.processInfo.processorCount
+        return Int32(min(max(cores, 4), 8))
+    }()
 
     init(modelURL: URL, gpuLayers: Int32 = 0) async throws {
         self.modelURL = modelURL

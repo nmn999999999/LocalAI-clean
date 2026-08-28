@@ -19,6 +19,24 @@ import org.json.JSONObject
  *  到达软上限前一轮会先通知模型强制收尾；若仍无暗号则优雅退出并返回最后一轮内容。 */
 object AgentService {
 
+    /** 流式展示桥：Agent 循环过程中通过它把每一轮的「思考 / 正文 / 工具调用」实时推给聊天 UI。
+     *  UI 负责创建与更新气泡；AgentService 只负责在正确的时机调用对应方法。
+     *  不传 sink 时回退为「整轮收集后一次性返回」的旧行为，保证降级兼容。 */
+    interface AgentSink {
+        /** 开始新一轮迭代：UI 创建一条 streaming 的 assistant 气泡并返回它。 */
+        suspend fun beginIteration(): ChatMessage
+
+        /** 给指定气泡追加原始 token（含 <think> 标签，气泡会自动解析为思考/正文流）。 */
+        suspend fun appendToken(message: ChatMessage, token: String)
+
+        /** 当前轮解析出工具调用：把记录挂到该气泡（含结果），气泡内以可展开 chip 展示。 */
+        suspend fun attachToolCall(message: ChatMessage, call: ToolCall)
+
+        /** 结束当前轮迭代：气泡停止 streaming。 */
+        suspend fun endIteration(message: ChatMessage)
+    }
+
+
     const val SOFT_ITERATION_LIMIT = 50
 
     /** 工作历史上限（条数）。超过后丢弃最旧的对话消息（保留 system 工具说明），
@@ -88,6 +106,7 @@ object AgentService {
     suspend fun run(
         history: List<ChatMessage>,
         settings: ModelSettings,
+        sink: AgentSink? = null,
     ): Pair<String, List<ToolCall>> {
         _steps.value = emptyList()
         _isRunning.value = true
@@ -112,13 +131,24 @@ object AgentService {
                 // 超过软上限仍未结束：优雅退出，返回最后一轮内容
                 if (iteration > SOFT_ITERATION_LIMIT) break
 
+                val iterationMsg = sink?.beginIteration()
                 val promptMessages = withToolInstructions(trimmedHistory(workingHistory))
                 val raw = try {
                     val sb = StringBuilder()
-                    LLMService.streamChat(promptMessages, settings)
-                        .collect { sb.append(it) }
+                    if (sink != null && iterationMsg != null) {
+                        // 流式：逐 token 透传原始文本，气泡自动解析 <think> 思考块与正文
+                        LLMService.streamChat(promptMessages, settings)
+                            .collect {
+                                sb.append(it)
+                                sink.appendToken(iterationMsg, it)
+                            }
+                    } else {
+                        LLMService.streamChat(promptMessages, settings)
+                            .collect { sb.append(it) }
+                    }
                     sb.toString()
                 } catch (e: Exception) {
+                    if (iterationMsg != null) sink?.endIteration(iterationMsg)
                     appendStep(Step.Kind.FINAL_ANSWER, "生成失败: ${e.message}")
                     return Pair("生成失败: ${e.message}", allToolCalls)
                 }
@@ -129,6 +159,7 @@ object AgentService {
                 val finalAnswer = extractFinalAnswer(raw)
                 if (finalAnswer != null) {
                     appendStep(Step.Kind.FINAL_ANSWER, "检测到结束暗号，输出最终回答")
+                    if (iterationMsg != null) sink?.endIteration(iterationMsg)
                     return Pair(stripThinkTags(finalAnswer), allToolCalls)
                 }
 
@@ -149,14 +180,18 @@ object AgentService {
                     )
                     allToolCalls.add(record)
                     appendStep(Step.Kind.RESULT, "${call.name} → $limited")
+                    // 流式：把工具调用挂到当前轮气泡（可展开 chip 展示参数/结果）
+                    if (iterationMsg != null) sink?.attachToolCall(iterationMsg, record)
 
                     workingHistory.add(ChatMessage(role = MessageRole.ASSISTANT, content = content, toolCalls = listOf(record)))
                     workingHistory.add(ChatMessage(role = MessageRole.TOOL, content = "[${call.name} 结果]\n$limited"))
+                    if (iterationMsg != null) sink?.endIteration(iterationMsg)
                 } else {
                     // 3) 无暗号、无有效工具调用：视为模型的中间思考，
                     //    自动触发下一轮思考（思考内容展示在步骤里，不被吞掉）。
                     lastThinking = content
                     appendStep(Step.Kind.THINKING, "思考：${brief(content)}")
+                    if (iterationMsg != null) sink?.endIteration(iterationMsg)
 
                     workingHistory.add(ChatMessage(role = MessageRole.ASSISTANT, content = content))
 

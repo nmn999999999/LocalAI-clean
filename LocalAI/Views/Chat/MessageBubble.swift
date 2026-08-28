@@ -61,9 +61,17 @@ struct MessageBubble: View {
             .padding(.horizontal, 4)
 
         case .tool:
-            Label("工具消息", systemImage: "wrench.and.screwdriver")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 4) {
+                Label("工具消息", systemImage: "wrench.and.screwdriver")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                if !message.content.isEmpty {
+                    Text(message.content)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+            }
 
         case .system:
             EmptyView()

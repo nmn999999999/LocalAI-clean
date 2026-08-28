@@ -16,6 +16,20 @@ final class AgentService: ObservableObject {
         }
     }
 
+    /// 流式展示桥：Agent 循环过程中通过它把每一轮的「思考 / 正文 / 工具调用」实时推给聊天 UI。
+    /// UI 负责创建与更新气泡；AgentService 只负责在正确的时机调用对应方法。
+    /// 无桥（bridge == nil）时回退为「整轮收集后一次性返回」的旧行为，保证降级兼容。
+    struct AgentDisplayBridge {
+        /// 开始新一轮迭代：UI 创建一条 streaming 的 assistant 气泡并返回其 id。
+        let beginIteration: () -> UUID
+        /// 给指定气泡追加原始 token（含 `<think>` 标签，气泡会自动解析为思考/正文流）。
+        let appendToken: (UUID, String) -> Void
+        /// 当前轮解析出工具调用：把记录挂到该气泡（含结果），气泡内以可展开 chip 展示。
+        let attachToolCall: (UUID, ChatMessage.ToolCall) -> Void
+        /// 结束当前轮迭代：气泡停止 streaming（isStreaming = false）。
+        let endIteration: (UUID) -> Void
+    }
+
     @Published private(set) var steps: [Step] = []
     @Published private(set) var isRunning = false
 
@@ -75,11 +89,14 @@ final class AgentService: ObservableObject {
     }
 
     /// 在对话中执行 Agent 循环，返回最终 assistant 消息内容与全部工具调用记录。
+    /// 传入 `bridge` 时改为流式：每一轮迭代实时通过桥把思考/正文/工具调用推给 UI；
+    /// 不传 `bridge` 则回退为整轮收集后一次性返回（降级兼容 / 测试用）。
     func run(
         history: [ChatMessage],
         settings: ModelSettings,
         toolsEnabledTools: [AgentToolDefinition] = BuiltInTools.allTools,
-        llm: LLMService
+        llm: LLMService,
+        bridge: AgentDisplayBridge? = nil
     ) async -> (content: String, toolCalls: [ChatMessage.ToolCall]) {
 
         steps.removeAll()
@@ -106,13 +123,25 @@ final class AgentService: ObservableObject {
             // 超过软上限仍未结束：优雅退出，返回最后一轮内容
             if iteration > Self.softIterationLimit { break }
 
+            let iterationID = bridge?.beginIteration()
             let promptMessages = withToolInstructions(history: Self.trimmedHistory(workingHistory), tools: toolsEnabledTools)
 
-            let raw: String
+            var raw = ""
             do {
-                raw = try await llm.complete(messages: promptMessages, settings: settings)
+                if let bridge {
+                    // 流式：逐 token 透传原始文本，气泡自动解析 <think> 思考块与正文
+                    let stream = llm.streamChat(history: promptMessages, settings: settings)
+                    for try await token in stream {
+                        try Task.checkCancellation()
+                        raw += token
+                        bridge.appendToken(iterationID!, token)
+                    }
+                } else {
+                    raw = try await llm.complete(messages: promptMessages, settings: settings)
+                }
             } catch {
                 let msg = "生成失败: \(error.localizedDescription)"
+                if let id = iterationID { bridge?.endIteration(id) }
                 appendStep(.finalAnswer, msg)
                 return (msg, allToolCalls)
             }
@@ -123,6 +152,7 @@ final class AgentService: ObservableObject {
             if let pre = Self.extractFinalAnswer(from: raw) {
                 let answer = Self.stripThinkTags(pre)
                 appendStep(.finalAnswer, "检测到结束暗号，输出最终回答")
+                if let id = iterationID { bridge?.endIteration(id) }
                 return (answer, allToolCalls)
             }
 
@@ -145,6 +175,8 @@ final class AgentService: ObservableObject {
                 )
                 allToolCalls.append(record)
                 appendStep(.result, "\(call.name) → \(limited)")
+                // 流式：把工具调用挂到当前轮气泡（可展开 chip 展示参数/结果）
+                if let id = iterationID { bridge?.attachToolCall(id, record) }
 
                 // 把工具结果作为新一轮上下文
                 workingHistory.append(
@@ -153,11 +185,13 @@ final class AgentService: ObservableObject {
                 workingHistory.append(
                     ChatMessage(role: .tool, content: "[\(call.name) 结果]\n\(limited)")
                 )
+                if let id = iterationID { bridge?.endIteration(id) }
             } else {
                 // 3) 无暗号、无有效工具调用：视为模型的中间思考，
                 //    自动触发下一轮思考（思考内容展示在步骤里，不被吞掉）。
                 lastThinking = content
                 appendStep(.thinking, "思考：\(Self.brief(content))")
+                if let id = iterationID { bridge?.endIteration(id) }
 
                 workingHistory.append(ChatMessage(role: .assistant, content: content))
 

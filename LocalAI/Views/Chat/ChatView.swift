@@ -277,14 +277,21 @@ struct ChatView: View {
         conv.updateTitle()
         conv.modelName = llmService.loadedModelName
 
-        // 预插入一条流式 assistant 消息，token 逐字更新到气泡内
-        let assistantMsg = ChatMessage(role: .assistant, content: "", isStreaming: true)
-        conv.messages.append(assistantMsg)
-        chatStore.upsert(conv)
-
-        // 传给引擎的历史不包含占位消息本身
-        let history = conv.messages.filter { $0.id != assistantMsg.id }
         let settings = SettingsStorage.shared.settings
+
+        // 历史快照：agent 模式不插入占位气泡（由桥逐轮建气泡）；普通模式先插一条占位气泡逐字流式。
+        let history: [ChatMessage]
+        let assistantMsg: ChatMessage?
+        if isAgentMode {
+            history = Array(conv.messages)
+            assistantMsg = nil
+        } else {
+            let m = ChatMessage(role: .assistant, content: "", isStreaming: true)
+            conv.messages.append(m)
+            assistantMsg = m
+            history = conv.messages.filter { $0.id != m.id }
+        }
+        chatStore.upsert(conv)
 
         isGenerating = true
         generationTask = Task {
@@ -294,17 +301,36 @@ struct ChatView: View {
             }
 
             if isAgentMode {
-                let result = await agentService.run(
+                // 流式桥：每一轮迭代实时建气泡 / 追加 token / 挂工具调用 / 结束。
+                // 气泡直接透传原始 token（含 <think> 标签），MessageBubble 自动解析思考流与正文流。
+                let bridge = AgentService.AgentDisplayBridge(
+                    beginIteration: {
+                        let m = ChatMessage(role: .assistant, content: "", isStreaming: true)
+                        var c = chatStore.currentOrNew
+                        c.messages.append(m)
+                        chatStore.upsert(c)
+                        return m.id
+                    },
+                    appendToken: { id, token in
+                        appendAssistantToken(id: id, token: token)
+                    },
+                    attachToolCall: { id, call in
+                        attachToolCallToMessage(id: id, call: call)
+                    },
+                    endIteration: { id in
+                        finalizeMessage(id: id)
+                    }
+                )
+                _ = await agentService.run(
                     history: history,
                     settings: settings,
-                    llm: llmService
+                    llm: llmService,
+                    bridge: bridge
                 )
-                // 注意：必须显式传 streaming: false，否则 assistant 消息的 isStreaming 永远为 true，
-                // 导致 ChatStore.scheduleSave() 的守卫永久拦截落盘，整段 Agent 会话丢失。
-                updateAssistant(id: assistantMsg.id, content: result.content, toolCalls: result.toolCalls, streaming: false)
                 return
             }
 
+            guard let assistantMsg else { return }
             var full = ""
             do {
                 let stream = llmService.streamChat(history: history, settings: settings, images: images.compactMap { $0.cgImage })
@@ -341,6 +367,32 @@ struct ChatView: View {
     private func appendAssistant(content: String, toolCalls: [ChatMessage.ToolCall]) {
         var conv = chatStore.currentOrNew
         conv.messages.append(ChatMessage(role: .assistant, content: content, toolCalls: toolCalls))
+        chatStore.upsert(conv)
+    }
+
+    // MARK: - Agent 流式辅助（逐轮气泡）
+
+    /// 给指定 assistant 气泡追加一个原始 token（含 <think> 标签，气泡自动解析思考/正文）。
+    private func appendAssistantToken(id: UUID, token: String) {
+        var conv = chatStore.currentOrNew
+        guard let idx = conv.messages.firstIndex(where: { $0.id == id }) else { return }
+        conv.messages[idx].content += token
+        chatStore.upsert(conv)
+    }
+
+    /// 把解析出的工具调用挂到指定气泡（气泡内以可展开 chip 展示参数与结果）。
+    private func attachToolCallToMessage(id: UUID, call: ChatMessage.ToolCall) {
+        var conv = chatStore.currentOrNew
+        guard let idx = conv.messages.firstIndex(where: { $0.id == id }) else { return }
+        conv.messages[idx].toolCalls.append(call)
+        chatStore.upsert(conv)
+    }
+
+    /// 结束指定气泡的流式状态（isStreaming = false），使其可被落盘与正常渲染。
+    private func finalizeMessage(id: UUID) {
+        var conv = chatStore.currentOrNew
+        guard let idx = conv.messages.firstIndex(where: { $0.id == id }) else { return }
+        conv.messages[idx].isStreaming = false
         chatStore.upsert(conv)
     }
 
