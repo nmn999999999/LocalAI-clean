@@ -103,6 +103,83 @@ object BuiltInTools {
             "web_search", "web_search", "联网搜索网页（Bing 等），返回相关结果标题、链接与摘要",
             mapOf("query" to ParameterSchema("string", "搜索关键词"))
         ),
+        AgentToolDefinition(
+            "regex_extract", "regex_extract", "使用正则表达式从文本中提取匹配的内容",
+            mapOf(
+                "text" to ParameterSchema("string", "要搜索的文本"),
+                "pattern" to ParameterSchema("string", "正则表达式模式"),
+            )
+        ),
+        AgentToolDefinition(
+            "text_summary", "text_summary", "对文本进行智能摘要，提取关键信息",
+            mapOf(
+                "text" to ParameterSchema("string", "要摘要的文本"),
+                "max_length" to ParameterSchema("number", "摘要最大长度（可选，默认200）"),
+            )
+        ),
+        AgentToolDefinition(
+            "number_base", "number_base", "进制转换：在 decimal(十进制)/binary(二进制)/octal(八进制)/hex(十六进制) 之间互转",
+            mapOf(
+                "value" to ParameterSchema("string", "要转换的数值，如 255 或 FF"),
+                "from" to ParameterSchema("string", "原进制", listOf("decimal", "binary", "octal", "hex")),
+                "to" to ParameterSchema("string", "目标进制", listOf("decimal", "binary", "octal", "hex")),
+            )
+        ),
+        AgentToolDefinition(
+            "color_convert", "color_convert", "颜色转换：十六进制(#RRGGBB)与 RGB(255,0,0) 互转",
+            mapOf(
+                "mode" to ParameterSchema("string", "转换方向", listOf("to_hex", "to_rgb")),
+                "value" to ParameterSchema("string", "to_hex 时传 RGB 如 255,0,0；to_rgb 时传十六进制如 #ff0000 或 ff0000"),
+            )
+        ),
+        AgentToolDefinition(
+            "sort_text", "sort_text", "按行排序文本，可选去重/忽略大小写/逆序",
+            mapOf(
+                "text" to ParameterSchema("string", "要排序的文本（按换行分行）"),
+                "reverse" to ParameterSchema("boolean", "是否逆序（默认 false）"),
+                "ignore_case" to ParameterSchema("boolean", "排序时忽略大小写（默认 false）"),
+                "dedup" to ParameterSchema("boolean", "是否去除重复行（默认 false）"),
+            )
+        ),
+        AgentToolDefinition(
+            "find_replace", "find_replace", "在文本中查找并替换内容，支持正则与普通文本",
+            mapOf(
+                "text" to ParameterSchema("string", "原文本"),
+                "find" to ParameterSchema("string", "要查找的内容"),
+                "replace" to ParameterSchema("string", "替换为的内容（默认空串）"),
+                "regex" to ParameterSchema("boolean", "find 是否按正则匹配（默认 false）"),
+                "all" to ParameterSchema("boolean", "是否替换全部（默认 true；false 仅替换首个）"),
+            )
+        ),
+        AgentToolDefinition(
+            "case_convert", "case_convert", "标识符命名风格转换：snake/camel/Pascal/kebab",
+            mapOf(
+                "text" to ParameterSchema("string", "要转换的标识符"),
+                "style" to ParameterSchema("string", "目标风格", listOf("snake", "camel", "pascal", "kebab")),
+            )
+        ),
+        AgentToolDefinition(
+            "password_generate", "password_generate", "生成高强度随机密码，可指定长度与字符类别",
+            mapOf(
+                "length" to ParameterSchema("number", "长度（默认 16，范围 4~128）"),
+                "digits" to ParameterSchema("boolean", "包含数字（默认 true）"),
+                "symbols" to ParameterSchema("boolean", "包含符号（默认 true）"),
+                "uppercase" to ParameterSchema("boolean", "包含大写字母（默认 true）"),
+                "lowercase" to ParameterSchema("boolean", "包含小写字母（默认 true）"),
+            )
+        ),
+        AgentToolDefinition(
+            "roman", "roman", "罗马数字与阿拉伯数字互转（自动识别方向）",
+            mapOf("value" to ParameterSchema("string", "阿拉伯数字(如 1994)或罗马数字(如 MCMXCIV)"))
+        ),
+        AgentToolDefinition(
+            "unit_convert", "unit_convert", "单位换算：长度/重量/温度/体积/数据量。from 与 to 为同一类别的单位名",
+            mapOf(
+                "value" to ParameterSchema("number", "数值"),
+                "from" to ParameterSchema("string", "原单位（如 km/m/kg/g/°C/°F/K/L/ml/MB/GB）"),
+                "to" to ParameterSchema("string", "目标单位"),
+            )
+        ),
     )
 
     /** 执行工具。arguments 为 JSON 解析出的 Map。 */
@@ -121,6 +198,16 @@ object BuiltInTools {
         "note" -> executeNote(arguments)
         "clipboard" -> executeClipboard(arguments)
         "web_search" -> executeWebSearch(arguments)
+        "regex_extract" -> executeRegexExtract(arguments)
+        "text_summary" -> executeTextSummary(arguments)
+        "number_base" -> executeNumberBase(arguments)
+        "color_convert" -> executeColorConvert(arguments)
+        "sort_text" -> executeSortText(arguments)
+        "find_replace" -> executeFindReplace(arguments)
+        "case_convert" -> executeCaseConvert(arguments)
+        "password_generate" -> executePasswordGenerate(arguments)
+        "roman" -> executeRoman(arguments)
+        "unit_convert" -> executeUnitConvert(arguments)
         else -> "未知工具: $toolName"
     }
 
@@ -289,6 +376,300 @@ object BuiltInTools {
         val query = arguments["query"] as? String ?: return "错误: 缺少 query 参数"
         // 优先 SearXNG（自托管搜索服务，可在设置中配置），失败自动回退维基百科
         return SearchService.search(query, com.localai.app.store.SettingsStorage.settings)
+    }
+
+    // MARK: 正则提取
+
+    private fun executeRegexExtract(arguments: Map<String, Any?>): String {
+        val text = arguments["text"] as? String ?: return "错误: 缺少 text 参数"
+        val pattern = arguments["pattern"] as? String ?: return "错误: 缺少 pattern 参数"
+        val regex = runCatching { Regex(pattern) }.getOrNull() ?: return "错误: 无效的正则表达式模式「$pattern」"
+        val matches = regex.findAll(text).toList()
+        if (matches.isEmpty()) return "未找到匹配「$pattern」的内容"
+        val results = matches.take(20).mapIndexed { i, m ->
+            val groups = m.groupValues.drop(1)
+            buildString {
+                append("${i + 1}. ${m.value}")
+                if (groups.isNotEmpty()) append(" [捕获组: ${groups.joinToString(", ")}]")
+            }
+        }
+        return "找到 ${matches.size} 个匹配:\n${results.joinToString("\n")}"
+    }
+
+    // MARK: 文本摘要
+
+    private fun executeTextSummary(arguments: Map<String, Any?>): String {
+        val text = arguments["text"] as? String ?: return "错误: 缺少 text 参数"
+        val maxLength = (arguments["max_length"] as? Number)?.toInt() ?: 200
+        if (text.length <= maxLength) return "原文较短，无需摘要:\n$text"
+        val sentences = text.split(Regex("[。！？\\n]")).map { it.trim() }.filter { it.isNotEmpty() }
+        if (sentences.isEmpty()) return "无法提取有效内容"
+        val keywords = listOf("重要", "关键", "核心", "主要", "首先", "其次", "最后", "总结", "结论",
+            "important", "key", "main", "first", "conclusion", "summary")
+        val scored = sentences.mapIndexed { idx, s ->
+            var score = 0.0
+            if (idx < 3) score += 2.0
+            if (idx >= sentences.size - 2) score += 1.5
+            val len = s.length
+            if (len > 10 && len < 100) score += 1.0
+            val low = s.lowercase()
+            for (k in keywords) if (low.contains(k)) score += 1.5
+            s to score
+        }
+        val top = scored.sortedByDescending { it.second }.take(3).joinToString("。") { it.first }
+        val summary = if (top.length > maxLength) top.take(maxLength - 3) + "..." else top
+        return "摘要:\n$summary"
+    }
+
+    // MARK: 进制转换
+
+    private fun radixFor(name: String): Int? = when (name) {
+        "decimal" -> 10
+        "binary" -> 2
+        "octal" -> 8
+        "hex", "hexadecimal" -> 16
+        else -> null
+    }
+
+    private fun executeNumberBase(arguments: Map<String, Any?>): String {
+        val value = (arguments["value"] as? String)?.trim() ?: return "错误: 缺少 value 参数"
+        if (value.isEmpty()) return "错误: 缺少 value 参数"
+        val from = (arguments["from"] as? String)?.lowercase() ?: "decimal"
+        val to = (arguments["to"] as? String)?.lowercase() ?: "hex"
+        val fr = radixFor(from) ?: return "错误: from 必须是 decimal/binary/octal/hex 之一"
+        val tr = radixFor(to) ?: return "错误: to 必须是 decimal/binary/octal/hex 之一"
+        val num = runCatching { value.toInt(fr) }.getOrNull() ?: return "错误: 无法将「$value」按 $from 进制解析"
+        val out = if (tr == 10) num.toString() else num.toString(tr)
+        return "$value ($from) = $out ($to)"
+    }
+
+    // MARK: 颜色转换
+
+    private fun executeColorConvert(arguments: Map<String, Any?>): String {
+        val mode = arguments["mode"] as? String ?: return "错误: 缺少 mode 参数(to_hex/to_rgb)"
+        val value = (arguments["value"] as? String)?.trim() ?: return "错误: 缺少 value 参数"
+        if (value.isEmpty()) return "错误: 缺少 value 参数"
+        return if (mode == "to_hex") {
+            val parts = value.split(",").map { it.trim() }
+            if (parts.size != 3) return "错误: to_hex 需要 RGB 形如 255,0,0"
+            val r = parts[0].toIntOrNull() ?: return "错误: 无效 R 分量"
+            val g = parts[1].toIntOrNull() ?: return "错误: 无效 G 分量"
+            val b = parts[2].toIntOrNull() ?: return "错误: 无效 B 分量"
+            if (r !in 0..255 || g !in 0..255 || b !in 0..255) return "错误: RGB 分量需在 0~255"
+            String.format("#%02X%02X%02X", r, g, b)
+        } else if (mode == "to_rgb") {
+            var h = value.removePrefix("#")
+            if (h.length != 6) return "错误: to_rgb 需要十六进制形如 #ff0000"
+            val intVal = runCatching { h.toInt(16) }.getOrNull() ?: return "错误: 无效十六进制"
+            val r = (intVal shr 16) and 0xFF
+            val g = (intVal shr 8) and 0xFF
+            val b = intVal and 0xFF
+            "$r, $g, $b"
+        } else "错误: mode 必须是 to_hex 或 to_rgb"
+    }
+
+    // MARK: 文本排序
+
+    private fun executeSortText(arguments: Map<String, Any?>): String {
+        val text = arguments["text"] as? String ?: return "错误: 缺少 text 参数"
+        val reverse = (arguments["reverse"] as? Boolean) ?: false
+        val ignoreCase = (arguments["ignore_case"] as? Boolean) ?: false
+        val dedup = (arguments["dedup"] as? Boolean) ?: false
+        val lines = text.lines().toMutableList()
+        lines.sortWith { a, b ->
+            if (ignoreCase) a.compareTo(b, ignoreCase = true) else a.compareTo(b)
+        }
+        if (reverse) lines.reverse()
+        val result = if (dedup) {
+            val out = mutableListOf<String>()
+            for (l in lines) if (out.lastOrNull() != l) out.add(l)
+            out
+        } else lines
+        return result.joinToString("\n")
+    }
+
+    // MARK: 查找替换
+
+    private fun executeFindReplace(arguments: Map<String, Any?>): String {
+        val text = arguments["text"] as? String ?: return "错误: 缺少 text 参数"
+        val find = arguments["find"] as? String ?: return "错误: 缺少 find 参数"
+        val replace = arguments["replace"] as? String ?: ""
+        val regex = (arguments["regex"] as? Boolean) ?: false
+        val all = (arguments["all"] as? Boolean) ?: true
+        return if (regex) {
+            val re = runCatching { Regex(find) }.getOrNull() ?: return "错误: 无效的正则「$find」"
+            if (all) re.replace(text, replace) else re.replaceFirst(text, replace)
+        } else {
+            if (all) text.replace(find, replace) else text.replaceFirst(find, replace)
+        }
+    }
+
+    // MARK: 命名风格转换
+
+    private fun splitIdentifier(s: String): List<String> {
+        val result = mutableListOf<String>()
+        var current = StringBuilder()
+        val chars = s.toCharArray()
+        for (i in chars.indices) {
+            val c = chars[i]
+            if (c.isLetterOrDigit()) {
+                if (c.isUpperCase() && current.isNotEmpty() && !current.last().isUpperCase()) {
+                    result.add(current.toString())
+                    current = StringBuilder()
+                }
+                current.append(c)
+            } else if (current.isNotEmpty()) {
+                result.add(current.toString())
+                current = StringBuilder()
+            }
+        }
+        if (current.isNotEmpty()) result.add(current.toString())
+        return result.filter { it.isNotEmpty() }
+    }
+
+    private fun executeCaseConvert(arguments: Map<String, Any?>): String {
+        val text = arguments["text"] as? String ?: return "错误: 缺少 text 参数"
+        if (text.isEmpty()) return "错误: 缺少 text 参数"
+        val style = arguments["style"] as? String ?: return "错误: 缺少 style 参数"
+        val words = splitIdentifier(text)
+        return when (style) {
+            "snake" -> words.map { it.lowercase() }.joinToString("_")
+            "kebab" -> words.map { it.lowercase() }.joinToString("-")
+            "camel" -> words.mapIndexed { i, w -> if (i == 0) w.lowercase() else w.replaceFirstChar { it.uppercase() } }.joinToString("")
+            "pascal" -> words.map { it.replaceFirstChar { it.uppercase() } }.joinToString("")
+            else -> "错误: style 必须是 snake/camel/pascal/kebab"
+        }
+    }
+
+    // MARK: 密码生成
+
+    private fun executePasswordGenerate(arguments: Map<String, Any?>): String {
+        val length = (arguments["length"] as? Number)?.toInt()?.coerceIn(4, 128) ?: 16
+        val digits = (arguments["digits"] as? Boolean) ?: true
+        val symbols = (arguments["symbols"] as? Boolean) ?: true
+        val uppercase = (arguments["uppercase"] as? Boolean) ?: true
+        val lowercase = (arguments["lowercase"] as? Boolean) ?: true
+        val lowers = "abcdefghijklmnopqrstuvwxyz"
+        val uppers = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+        val digs = "0123456789"
+        val syms = "!@#\$%^&*()-_=+[]{};:,.<>?"
+        val pool = buildString {
+            if (lowercase) append(lowers)
+            if (uppercase) append(uppers)
+            if (digits) append(digs)
+            if (symbols) append(syms)
+        }
+        if (pool.isEmpty()) return "错误: 至少启用一种字符类别"
+        val rnd = java.util.Random()
+        val chars = CharArray(length) { pool[rnd.nextInt(pool.length)] }
+        if (lowercase) chars[0] = lowers[rnd.nextInt(lowers.length)]
+        if (uppercase && length > 1) chars[1] = uppers[rnd.nextInt(uppers.length)]
+        if (digits && length > 2) chars[2] = digs[rnd.nextInt(digs.length)]
+        if (symbols && length > 3) chars[3] = syms[rnd.nextInt(syms.length)]
+        return "生成密码（长度 $length）: ${String(chars)}"
+    }
+
+    // MARK: 罗马数字
+
+    private val romanMap = listOf(
+        "M" to 1000, "CM" to 900, "D" to 500, "CD" to 400, "C" to 100,
+        "XC" to 90, "L" to 50, "XL" to 40, "X" to 10, "IX" to 9,
+        "V" to 5, "IV" to 4, "I" to 1
+    )
+
+    private fun intToRoman(n: Int): String {
+        var n = n
+        val sb = StringBuilder()
+        for ((sym, v) in romanMap) while (n >= v) { sb.append(sym); n -= v }
+        return sb.toString()
+    }
+
+    private fun romanToInt(s: String): Int? {
+        var total = 0
+        var i = 0
+        while (i < s.length) {
+            val two = if (i + 1 < s.length) s.substring(i, i + 2) else null
+            if (two != null) {
+                val v = romanMap.firstOrNull { it.first == two }?.second
+                if (v != null) { total += v; i += 2; continue }
+            }
+            val v = romanMap.firstOrNull { it.first == s[i].toString() }?.second ?: return null
+            total += v
+            i += 1
+        }
+        return total
+    }
+
+    private fun executeRoman(arguments: Map<String, Any?>): String {
+        val value = (arguments["value"] as? String)?.trim() ?: return "错误: 缺少 value 参数"
+        if (value.isEmpty()) return "错误: 缺少 value 参数"
+        val num = value.toIntOrNull()
+        if (num != null) {
+            if (num !in 1..3999) return "错误: 阿拉伯数字需在 1~3999"
+            return "$value = ${intToRoman(num)}"
+        }
+        val up = value.uppercase()
+        val n = romanToInt(up) ?: return "错误: 无法解析罗马数字「$value」"
+        return "$value = $n"
+    }
+
+    // MARK: 单位换算
+
+    private val lengthToMeter = mapOf("m" to 1.0, "km" to 1000.0, "cm" to 0.01, "mm" to 0.001,
+        "mile" to 1609.344, "yard" to 0.9144, "foot" to 0.3048, "inch" to 0.0254)
+    private val weightToKg = mapOf("kg" to 1.0, "g" to 0.001, "mg" to 0.000001, "t" to 1000.0, "ton" to 1000.0,
+        "lb" to 0.45359237, "pound" to 0.45359237, "oz" to 0.028349523125, "ounce" to 0.028349523125)
+    private val volumeToLiter = mapOf("l" to 1.0, "liter" to 1.0, "ml" to 0.001, "m3" to 1000.0,
+        "gallon" to 3.785411784, "cup" to 0.2365882365)
+    private val dataToByte = mapOf("b" to 1.0, "byte" to 1.0, "kb" to 1024.0, "mb" to 1048576.0,
+        "gb" to 1073741824.0, "tb" to 1099511627776.0)
+
+    private fun unitCategory(u: String): String? = when {
+        u in lengthToMeter -> "length"
+        u in weightToKg -> "weight"
+        u in volumeToLiter -> "volume"
+        u in dataToByte -> "data"
+        u in setOf("c", "°c", "f", "°f", "k") -> "temp"
+        else -> null
+    }
+
+    private fun unitToBase(u: String, value: Double): Double? {
+        return when {
+            u in lengthToMeter -> value * (lengthToMeter[u] ?: return null)
+            u in weightToKg -> value * (weightToKg[u] ?: return null)
+            u in volumeToLiter -> value * (volumeToLiter[u] ?: return null)
+            u in dataToByte -> value * (dataToByte[u] ?: return null)
+            u == "c" || u == "°c" -> value
+            u == "f" || u == "°f" -> (value - 32) / 1.8
+            u == "k" -> value - 273.15
+            else -> null
+        }
+    }
+
+    private fun baseToUnit(u: String, base: Double): Double? {
+        return when {
+            u in lengthToMeter -> base / (lengthToMeter[u] ?: return null)
+            u in weightToKg -> base / (weightToKg[u] ?: return null)
+            u in volumeToLiter -> base / (volumeToLiter[u] ?: return null)
+            u in dataToByte -> base / (dataToByte[u] ?: return null)
+            u == "c" || u == "°c" -> base
+            u == "f" || u == "°f" -> base * 1.8 + 32
+            u == "k" -> base + 273.15
+            else -> null
+        }
+    }
+
+    private fun executeUnitConvert(arguments: Map<String, Any?>): String {
+        val valueNum = (arguments["value"] as? Number)?.toDouble() ?: return "错误: 缺少或无效 value 参数"
+        val from = (arguments["from"] as? String)?.lowercase() ?: return "错误: 缺少 from 参数"
+        val to = (arguments["to"] as? String)?.lowercase() ?: return "错误: 缺少 to 参数"
+        val catFrom = unitCategory(from) ?: return "错误: 未知单位「$from」"
+        val catTo = unitCategory(to) ?: return "错误: 未知单位「$to」"
+        if (catFrom != catTo) return "错误: from 与 to 单位类别不一致"
+        val base = unitToBase(from, valueNum) ?: return "错误: 未知单位「$from」"
+        val out = baseToUnit(to, base) ?: return "错误: 未知单位「$to」"
+        val text = if (out == out.roundToInt().toDouble()) out.roundToInt().toString() else String.format("%.6g", out)
+        return "$valueNum $from = $text $to"
     }
 }
 

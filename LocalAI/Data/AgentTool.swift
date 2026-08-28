@@ -212,6 +212,87 @@ enum BuiltInTools {
                 "max_length": .init(type: "number", description: "摘要最大长度（可选，默认200）", enumValues: nil)
             ]
         ),
+        AgentToolDefinition(
+            id: "number_base",
+            name: "number_base",
+            description: "进制转换：在 decimal(十进制)/binary(二进制)/octal(八进制)/hex(十六进制) 之间互转",
+            parameters: [
+                "value": .init(type: "string", description: "要转换的数值，如 255 或 FF", enumValues: nil),
+                "from": .init(type: "string", description: "原进制", enumValues: ["decimal", "binary", "octal", "hex"]),
+                "to": .init(type: "string", description: "目标进制", enumValues: ["decimal", "binary", "octal", "hex"])
+            ]
+        ),
+        AgentToolDefinition(
+            id: "color_convert",
+            name: "color_convert",
+            description: "颜色转换：十六进制(#RRGGBB)与 RGB(255,0,0) 互转",
+            parameters: [
+                "mode": .init(type: "string", description: "转换方向", enumValues: ["to_hex", "to_rgb"]),
+                "value": .init(type: "string", description: "to_hex 时传 RGB 如 255,0,0；to_rgb 时传十六进制如 #ff0000 或 ff0000", enumValues: nil)
+            ]
+        ),
+        AgentToolDefinition(
+            id: "sort_text",
+            name: "sort_text",
+            description: "按行排序文本，可选去重/忽略大小写/逆序",
+            parameters: [
+                "text": .init(type: "string", description: "要排序的文本（按换行分行）", enumValues: nil),
+                "reverse": .init(type: "boolean", description: "是否逆序（默认 false）", enumValues: nil),
+                "ignore_case": .init(type: "boolean", description: "排序时忽略大小写（默认 false）", enumValues: nil),
+                "dedup": .init(type: "boolean", description: "是否去除重复行（默认 false）", enumValues: nil)
+            ]
+        ),
+        AgentToolDefinition(
+            id: "find_replace",
+            name: "find_replace",
+            description: "在文本中查找并替换内容，支持正则与普通文本",
+            parameters: [
+                "text": .init(type: "string", description: "原文本", enumValues: nil),
+                "find": .init(type: "string", description: "要查找的内容", enumValues: nil),
+                "replace": .init(type: "string", description: "替换为的内容（默认空串）", enumValues: nil),
+                "regex": .init(type: "boolean", description: "find 是否按正则匹配（默认 false）", enumValues: nil),
+                "all": .init(type: "boolean", description: "是否替换全部（默认 true；false 仅替换首个）", enumValues: nil)
+            ]
+        ),
+        AgentToolDefinition(
+            id: "case_convert",
+            name: "case_convert",
+            description: "标识符命名风格转换：snake/camel/Pascal/kebab",
+            parameters: [
+                "text": .init(type: "string", description: "要转换的标识符", enumValues: nil),
+                "style": .init(type: "string", description: "目标风格", enumValues: ["snake", "camel", "pascal", "kebab"])
+            ]
+        ),
+        AgentToolDefinition(
+            id: "password_generate",
+            name: "password_generate",
+            description: "生成高强度随机密码，可指定长度与字符类别",
+            parameters: [
+                "length": .init(type: "number", description: "长度（默认 16，范围 4~128）", enumValues: nil),
+                "digits": .init(type: "boolean", description: "包含数字（默认 true）", enumValues: nil),
+                "symbols": .init(type: "boolean", description: "包含符号（默认 true）", enumValues: nil),
+                "uppercase": .init(type: "boolean", description: "包含大写字母（默认 true）", enumValues: nil),
+                "lowercase": .init(type: "boolean", description: "包含小写字母（默认 true）", enumValues: nil)
+            ]
+        ),
+        AgentToolDefinition(
+            id: "roman",
+            name: "roman",
+            description: "罗马数字与阿拉伯数字互转（自动识别方向）",
+            parameters: [
+                "value": .init(type: "string", description: "阿拉伯数字(如 1994)或罗马数字(如 MCMXCIV)", enumValues: nil)
+            ]
+        ),
+        AgentToolDefinition(
+            id: "unit_convert",
+            name: "unit_convert",
+            description: "单位换算：长度/重量/温度/体积/数据量。from 与 to 为同一类别的单位名",
+            parameters: [
+                "value": .init(type: "number", description: "数值", enumValues: nil),
+                "from": .init(type: "string", description: "原单位（如 km/m/kg/g/°C/°F/K/L/ml/MB/GB）", enumValues: nil),
+                "to": .init(type: "string", description: "目标单位", enumValues: nil)
+            ]
+        ),
     ]
 
     // MARK: - 执行入口
@@ -240,6 +321,14 @@ enum BuiltInTools {
         case "web_search":      return await executeWebSearch(arguments: arguments)
         case "regex_extract":   return executeRegexExtract(arguments: arguments)
         case "text_summary":    return executeTextSummary(arguments: arguments)
+        case "number_base":     return executeNumberBase(arguments: arguments)
+        case "color_convert":   return executeColorConvert(arguments: arguments)
+        case "sort_text":       return executeSortText(arguments: arguments)
+        case "find_replace":    return executeFindReplace(arguments: arguments)
+        case "case_convert":    return executeCaseConvert(arguments: arguments)
+        case "password_generate": return executePasswordGenerate(arguments: arguments)
+        case "roman":           return executeRoman(arguments: arguments)
+        case "unit_convert":    return executeUnitConvert(arguments: arguments)
         default:
             return "未知工具: \(toolName)"
         }
@@ -795,5 +884,279 @@ enum BuiltInTools {
         }
         
         return "摘要:\n\(summary)"
+    }
+
+    // MARK: - 进制转换
+
+    private static func radixFor(name: String) -> Int? {
+        switch name {
+        case "decimal": return 10
+        case "binary": return 2
+        case "octal": return 8
+        case "hex", "hexadecimal": return 16
+        default: return nil
+        }
+    }
+
+    private static func executeNumberBase(arguments: [String: Any]) -> String {
+        guard let value = (arguments["value"] as? String)?.trimmingCharacters(in: .whitespaces),
+              !value.isEmpty else { return "错误: 缺少 value 参数" }
+        let from = (arguments["from"] as? String)?.lowercased() ?? "decimal"
+        let to = (arguments["to"] as? String)?.lowercased() ?? "hex"
+        guard let fr = radixFor(name: from), let tr = radixFor(name: to) else {
+            return "错误: from/to 必须是 decimal/binary/octal/hex 之一"
+        }
+        guard let num = Int(value, radix: fr) else {
+            return "错误: 无法将「\(value)」按 \(from) 进制解析"
+        }
+        let out: String = (tr == 10) ? String(num) : String(num, radix: tr)
+        return "\(value) (\(from)) = \(out) (\(to))"
+    }
+
+    // MARK: - 颜色转换
+
+    private static func executeColorConvert(arguments: [String: Any]) -> String {
+        guard let mode = arguments["mode"] as? String else { return "错误: 缺少 mode 参数(to_hex/to_rgb)" }
+        guard let value = (arguments["value"] as? String)?.trimmingCharacters(in: .whitespaces),
+              !value.isEmpty else { return "错误: 缺少 value 参数" }
+        if mode == "to_hex" {
+            let parts = value.components(separatedBy: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+            guard parts.count == 3,
+                  let r = Int(parts[0]), let g = Int(parts[1]), let b = Int(parts[2]),
+                  (0...255).contains(r), (0...255).contains(g), (0...255).contains(b) else {
+                return "错误: to_hex 需要 RGB 形如 255,0,0（各分量 0~255）"
+            }
+            return String(format: "#%02X%02X%02X", r, g, b)
+        } else if mode == "to_rgb" {
+            var h = value
+            if h.hasPrefix("#") { h.removeFirst() }
+            guard h.count == 6, let intVal = Int(h, radix: 16) else {
+                return "错误: to_rgb 需要十六进制形如 #ff0000"
+            }
+            let r = (intVal >> 16) & 0xFF
+            let g = (intVal >> 8) & 0xFF
+            let b = intVal & 0xFF
+            return "\(r), \(g), \(b)"
+        }
+        return "错误: mode 必须是 to_hex 或 to_rgb"
+    }
+
+    // MARK: - 文本排序
+
+    private static func executeSortText(arguments: [String: Any]) -> String {
+        guard let text = arguments["text"] as? String else { return "错误: 缺少 text 参数" }
+        let reverse = (arguments["reverse"] as? Bool) ?? false
+        let ignoreCase = (arguments["ignore_case"] as? Bool) ?? false
+        let dedup = (arguments["dedup"] as? Bool) ?? false
+        var lines = text.components(separatedBy: .newlines)
+        lines.sort {
+            ignoreCase ? ($0.localizedCaseInsensitiveCompare($1) == .orderedAscending) : ($0 < $1)
+        }
+        if reverse { lines.reverse() }
+        if dedup {
+            var out: [String] = []
+            for l in lines where out.last != l { out.append(l) }
+            lines = out
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    // MARK: - 查找替换
+
+    private static func executeFindReplace(arguments: [String: Any]) -> String {
+        guard let text = arguments["text"] as? String else { return "错误: 缺少 text 参数" }
+        guard let find = arguments["find"] as? String else { return "错误: 缺少 find 参数" }
+        let replace = arguments["replace"] as? String ?? ""
+        let regex = (arguments["regex"] as? Bool) ?? false
+        let all = (arguments["all"] as? Bool) ?? true
+        if regex {
+            guard let re = try? NSRegularExpression(pattern: find) else {
+                return "错误: 无效的正则「\(find)」"
+            }
+            let nsText = text as NSString
+            let range = NSRange(location: 0, length: nsText.length)
+            if all {
+                return re.stringByReplacingMatches(in: text, range: range, withTemplate: replace)
+            } else if let match = re.firstMatch(in: text, range: range) {
+                let result = re.replacementString(for: match, in: text, offset: 0, template: replace)
+                return nsText.replacingCharacters(in: match.range, with: result)
+            }
+            return text
+        } else if all {
+            return text.replacingOccurrences(of: find, with: replace)
+        } else if let r = text.range(of: find) {
+            return text.replacingCharacters(in: r, with: replace)
+        }
+        return text
+    }
+
+    // MARK: - 命名风格转换
+
+    private static func splitIdentifier(_ s: String) -> [String] {
+        var result: [String] = []
+        var current = ""
+        let chars = Array(s)
+        for i in 0..<chars.count {
+            let c = chars[i]
+            if c.isLetter || c.isNumber {
+                if c.isUppercase, !current.isEmpty, let prev = current.last, !prev.isUppercase {
+                    result.append(current)
+                    current = ""
+                }
+                current.append(c)
+            } else if !current.isEmpty {
+                result.append(current)
+                current = ""
+            }
+        }
+        if !current.isEmpty { result.append(current) }
+        return result.filter { !$0.isEmpty }
+    }
+
+    private static func executeCaseConvert(arguments: [String: Any]) -> String {
+        guard let text = arguments["text"] as? String, !text.isEmpty else { return "错误: 缺少 text 参数" }
+        guard let style = arguments["style"] as? String else { return "错误: 缺少 style 参数" }
+        let words = splitIdentifier(text)
+        switch style {
+        case "snake":  return words.map { $0.lowercased() }.joined(separator: "_")
+        case "kebab":  return words.map { $0.lowercased() }.joined(separator: "-")
+        case "camel":  return words.enumerated().map { i, w in i == 0 ? w.lowercased() : w.capitalized }.joined()
+        case "pascal": return words.map { $0.capitalized }.joined()
+        default: return "错误: style 必须是 snake/camel/pascal/kebab"
+        }
+    }
+
+    // MARK: - 密码生成
+
+    private static func executePasswordGenerate(arguments: [String: Any]) -> String {
+        let length = min(max((arguments["length"] as? NSNumber)?.intValue ?? 16, 4), 128)
+        let digits = (arguments["digits"] as? Bool) ?? true
+        let symbols = (arguments["symbols"] as? Bool) ?? true
+        let uppercase = (arguments["uppercase"] as? Bool) ?? true
+        let lowercase = (arguments["lowercase"] as? Bool) ?? true
+        let lowers = "abcdefghijklmnopqrstuvwxyz"
+        let uppers = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+        let digs = "0123456789"
+        let syms = "!@#$%^&*()-_=+[]{};:,.<>?"
+        var pool = ""
+        if lowercase { pool += lowers }
+        if uppercase { pool += uppers }
+        if digits { pool += digs }
+        if symbols { pool += syms }
+        guard !pool.isEmpty else { return "错误: 至少启用一种字符类别" }
+        var chars = (0..<length).map { _ in pool.randomElement()! }
+        if lowercase { chars[0] = lowers.randomElement()! }
+        if uppercase, chars.count > 1 { chars[1] = uppers.randomElement()! }
+        if digits, chars.count > 2 { chars[2] = digs.randomElement()! }
+        if symbols, chars.count > 3 { chars[3] = syms.randomElement()! }
+        return "生成密码（长度 \(length)）: \(String(chars))"
+    }
+
+    // MARK: - 罗马数字
+
+    private static let romanMap: [(String, Int)] = [
+        ("M", 1000), ("CM", 900), ("D", 500), ("CD", 400), ("C", 100),
+        ("XC", 90), ("L", 50), ("XL", 40), ("X", 10), ("IX", 9),
+        ("V", 5), ("IV", 4), ("I", 1)
+    ]
+
+    private static func intToRoman(_ n: Int) -> String {
+        var n = n
+        var s = ""
+        for (sym, val) in romanMap {
+            while n >= val { s += sym; n -= val }
+        }
+        return s
+    }
+
+    private static func romanToInt(_ s: String) -> Int? {
+        var total = 0
+        var i = 0
+        let chars = Array(s)
+        while i < chars.count {
+            let two = (i + 1 < chars.count) ? String(chars[i]) + String(chars[i + 1]) : nil
+            if let two, let val = romanMap.first(where: { $0.0 == two })?.1 {
+                total += val
+                i += 2
+                continue
+            }
+            guard let val = romanMap.first(where: { $0.0 == String(chars[i]) })?.1 else { return nil }
+            total += val
+            i += 1
+        }
+        return total
+    }
+
+    private static func executeRoman(arguments: [String: Any]) -> String {
+        guard let value = (arguments["value"] as? String)?.trimmingCharacters(in: .whitespaces),
+              !value.isEmpty else { return "错误: 缺少 value 参数" }
+        if let num = Int(value) {
+            guard (1...3999).contains(num) else { return "错误: 阿拉伯数字需在 1~3999" }
+            return "\(num) = \(intToRoman(num))"
+        }
+        let upper = value.uppercased()
+        guard let num = romanToInt(upper) else { return "错误: 无法解析罗马数字「\(value)」" }
+        return "\(value) = \(num)"
+    }
+
+    // MARK: - 单位换算
+
+    private static let lengthToMeter = ["m": 1.0, "km": 1000.0, "cm": 0.01, "mm": 0.001,
+                                        "mile": 1609.344, "yard": 0.9144, "foot": 0.3048, "inch": 0.0254]
+    private static let weightToKg = ["kg": 1.0, "g": 0.001, "mg": 0.000001, "t": 1000.0, "ton": 1000.0,
+                                    "lb": 0.45359237, "pound": 0.45359237, "oz": 0.028349523125, "ounce": 0.028349523125]
+    private static let volumeToLiter = ["l": 1.0, "liter": 1.0, "ml": 0.001, "m3": 1000.0,
+                                       "gallon": 3.785411784, "cup": 0.2365882365]
+    private static let dataToByte = ["b": 1.0, "byte": 1.0, "kb": 1024.0, "mb": 1048576.0,
+                                    "gb": 1073741824.0, "tb": 1099511627776.0]
+
+    private static func unitCategory(_ u: String) -> String? {
+        if lengthToMeter[u] != nil { return "length" }
+        if weightToKg[u] != nil { return "weight" }
+        if volumeToLiter[u] != nil { return "volume" }
+        if dataToByte[u] != nil { return "data" }
+        if ["c", "°c", "f", "°f", "k"].contains(u) { return "temp" }
+        return nil
+    }
+
+    private static func unitToBase(_ u: String, value: Double) -> Double? {
+        if let f = lengthToMeter[u] { return value * f }
+        if let f = weightToKg[u] { return value * f }
+        if let f = volumeToLiter[u] { return value * f }
+        if let f = dataToByte[u] { return value * f }
+        if u == "c" || u == "°c" { return value }
+        if u == "f" || u == "°f" { return (value - 32) / 1.8 }
+        if u == "k" { return value - 273.15 }
+        return nil
+    }
+
+    private static func baseToUnit(_ u: String, base: Double) -> Double? {
+        if let f = lengthToMeter[u] { return base / f }
+        if let f = weightToKg[u] { return base / f }
+        if let f = volumeToLiter[u] { return base / f }
+        if let f = dataToByte[u] { return base / f }
+        if u == "c" || u == "°c" { return base }
+        if u == "f" || u == "°f" { return base * 1.8 + 32 }
+        if u == "k" { return base + 273.15 }
+        return nil
+    }
+
+    private static func executeUnitConvert(arguments: [String: Any]) -> String {
+        guard let valueNum = (arguments["value"] as? NSNumber)?.doubleValue else {
+            return "错误: 缺少或无效 value 参数"
+        }
+        guard let from = (arguments["from"] as? String)?.lowercased(), !from.isEmpty else {
+            return "错误: 缺少 from 参数"
+        }
+        guard let to = (arguments["to"] as? String)?.lowercased(), !to.isEmpty else {
+            return "错误: 缺少 to 参数"
+        }
+        guard let catFrom = unitCategory(from), let catTo = unitCategory(to), catFrom == catTo else {
+            return "错误: from 与 to 单位类别不一致或未知"
+        }
+        guard let base = unitToBase(from, value: valueNum) else { return "错误: 未知单位「\(from)」" }
+        guard let out = baseToUnit(to, base: base) else { return "错误: 未知单位「\(to)」" }
+        let text = (out == out.rounded()) ? String(Int64(out)) : String(format: "%.6g", out)
+        return "\(valueNum) \(from) = \(text) \(to)"
     }
 }
