@@ -21,6 +21,13 @@ final class LlamaSwiftEngine: LLMEngine, @unchecked Sendable {
         self.modelURL = modelURL
         self.nGpuLayers = gpuLayers
 
+        // iPhone 统一内存有限：开启 GPU 层时把上下文上限卡到 2048，避免 Metal OOM。
+        var requestedCtx = SettingsStorage.shared.settings.contextLength
+        if nGpuLayers > 0 && requestedCtx > 2048 {
+            print("[LlamaSwiftEngine] GPU layers enabled (\(nGpuLayers)); clamp contextLength \(requestedCtx) -> 2048 to avoid Metal OOM")
+            requestedCtx = 2048
+        }
+
         var b: OpaquePointer?
         guard llama_bridge_create(&b) == 0, let handle = b else {
             throw LLMError.loadFailed("无法创建推理上下文")
@@ -32,7 +39,7 @@ final class LlamaSwiftEngine: LLMEngine, @unchecked Sendable {
             handle,
             modelURL.path,
             mmproj ?? "",
-            Int32(SettingsStorage.shared.settings.contextLength),
+            Int32(requestedCtx),
             nGpuLayers,
             nThreads
         )

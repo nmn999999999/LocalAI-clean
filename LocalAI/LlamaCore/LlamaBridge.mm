@@ -32,7 +32,7 @@ struct llama_bridge {
 
     int    n_threads = 4;
     int    n_batch   = 512;
-    int    n_ctx     = 4096;   // 上下文窗口（token 容量），用于 prompt 超长护栏
+    int    n_ctx     = 2048;   // 上下文窗口（token 容量），用于 prompt 超长护栏
     int    max_tokens = 512;
     float  temp = 0.8f;
     int    top_k = 40;
@@ -133,7 +133,7 @@ bool llama_bridge_load_model(llama_bridge * b,
     }
 
     struct llama_context_params cparams = llama_context_default_params();
-    cparams.n_ctx = n_ctx > 0 ? (uint32_t)n_ctx : 4096;
+    cparams.n_ctx = n_ctx > 0 ? (uint32_t)n_ctx : 2048;
     b->n_ctx = (int)cparams.n_ctx;   // 记录真实窗口，供后续护栏使用
     cparams.n_threads = b->n_threads;
     cparams.n_threads_batch = b->n_threads;
@@ -251,7 +251,19 @@ static int generate(llama_bridge * b, int n_past_start, void (*cb)(const char *,
         common_batch_add(b->batch, token, n_past, {0}, true);
         int rc = llama_decode(b->ctx, b->batch);
         if (rc != 0) {
-            set_error(b, with_log(b, "生成解码失败 (ret=" + std::to_string(rc) + ")"));
+            std::string hint = "生成解码失败 (ret=" + std::to_string(rc) + ")";
+            // 检测 Metal / GPU 统一内存不足，给出可操作建议
+            {
+                std::lock_guard<std::mutex> lock(b->log_mutex);
+                for (const auto & line : b->log_lines) {
+                    if (line.find("Insufficient Memory") != std::string::npos ||
+                        line.find("ggml_metal") != std::string::npos) {
+                        hint += "\n\n提示：Metal GPU 显存/统一内存不足。\n建议：到「设置」把「GPU 层数」改为 0（纯 CPU），或把「上下文长度」降到 2048 及以下，然后到「模型」页重新加载模型。";
+                        break;
+                    }
+                }
+            }
+            set_error(b, with_log(b, hint));
             return 1;
         }
         n_past++;

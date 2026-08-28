@@ -32,7 +32,7 @@ struct llama_bridge {
 
     int    n_threads = 4;
     int    n_batch   = 512;
-    int    n_ctx     = 4096;   // 上下文窗口（token 容量），用于 prompt 超长护栏
+    int    n_ctx     = 2048;   // 上下文窗口（token 容量），用于 prompt 超长护栏
     int    max_tokens = 512;
     float  temp = 0.8f;
     int    top_k = 40;
@@ -133,7 +133,7 @@ bool llama_bridge_load_model(llama_bridge * b,
     }
 
     struct llama_context_params cparams = llama_context_default_params();
-    cparams.n_ctx = n_ctx > 0 ? (uint32_t)n_ctx : 4096;
+    cparams.n_ctx = n_ctx > 0 ? (uint32_t)n_ctx : 2048;
     b->n_ctx = (int)cparams.n_ctx;   // 记录真实窗口，供后续护栏使用
     cparams.n_threads = b->n_threads;
     cparams.n_threads_batch = b->n_threads;

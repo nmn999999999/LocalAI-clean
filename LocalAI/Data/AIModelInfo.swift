@@ -126,7 +126,7 @@ struct ModelSettings: Codable, Sendable {
         topP: Double = 0.9,
         topK: Int = 40,
         maxTokens: Int = 2048,
-        contextLength: Int = 4096,
+        contextLength: Int = 2048,
         systemPrompt: String = "你是一个有帮助的AI助手。请用中文回答。",
         gpuLayers: Int = 0,
         searchEngine: String = "web",
@@ -157,7 +157,7 @@ struct ModelSettings: Codable, Sendable {
         topP = try c.decodeIfPresent(Double.self, forKey: .topP) ?? 0.9
         topK = try c.decodeIfPresent(Int.self, forKey: .topK) ?? 40
         maxTokens = try c.decodeIfPresent(Int.self, forKey: .maxTokens) ?? 2048
-        contextLength = try c.decodeIfPresent(Int.self, forKey: .contextLength) ?? 4096
+        contextLength = try c.decodeIfPresent(Int.self, forKey: .contextLength) ?? 2048
         systemPrompt = try c.decodeIfPresent(String.self, forKey: .systemPrompt)
             ?? "你是一个有帮助的AI助手。请用中文回答。"
         gpuLayers = try c.decodeIfPresent(Int.self, forKey: .gpuLayers) ?? 0

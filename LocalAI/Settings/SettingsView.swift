@@ -35,10 +35,10 @@ struct SettingsView: View {
                 sliderRow("Top-P", value: $storage.settings.topP, in: 0.1...1)
                 stepperRow("Top-K", value: $storage.settings.topK, in: 1...100, step: 5)
                 stepperRow("最大生成 Token", value: $storage.settings.maxTokens, in: 256...8192, step: 256)
-                stepperRow("上下文长度", value: $storage.settings.contextLength, in: 1024...32768, step: 1024)
-                stepperRow("GPU 层数 (0=纯CPU)", value: $storage.settings.gpuLayers, in: 0...99, step: 8)
+                stepperRow("上下文长度", value: $storage.settings.contextLength, in: 1024...8192, step: 1024)
+                stepperRow("GPU 层数 (0=纯CPU)", value: $storage.settings.gpuLayers, in: 0...64, step: 4)
 
-                Text("参数在下次对话时生效。上下文越长占用内存越高。iPhone 上 Metal 后端可能有兼容问题，默认 0（纯 CPU）最稳定；调高 GPU 层数可加速，需在「模型」页重新加载模型。")
+                Text("参数在下次对话时生效。上下文越长占用内存越高；iPhone 统一内存有限，开启 GPU 层数时建议上下文 ≤2048，否则极易触发 Metal 显存不足。默认 0（纯 CPU）最稳定；调高 GPU 层数可加速，需在「模型」页重新加载模型。")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
