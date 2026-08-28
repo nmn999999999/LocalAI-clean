@@ -28,3 +28,6 @@ android/app/src/main/jniLibs/
 # llama.cpp 交叉编译产物（由 build_llama_xcframework.sh / android/build_native.sh 重建）
 build-ios/
 llama.xcframework/
+
+# SSH 桥接静态库（libssh2 + mbedTLS 交叉编译，由 ssh/ 脚本重建）
+ssh.xcframework/

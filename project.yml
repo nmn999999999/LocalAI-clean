@@ -18,12 +18,15 @@ targets:
       - LocalAI
     dependencies:
       - framework: llama.xcframework
+        embed: false
+      - framework: ssh.xcframework
+        embed: false
     settings:
       base:
         GENERATE_INFOPLIST_FILE: YES
         PRODUCT_BUNDLE_IDENTIFIER: com.localai.app
-        MARKETING_VERSION: 1.0.0
-        CURRENT_PROJECT_VERSION: 1
+        MARKETING_VERSION: 0.3.4
+        CURRENT_PROJECT_VERSION: 5
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
@@ -32,7 +35,7 @@ targets:
         # 暴露 C 桥接头文件给 Swift
         SWIFT_OBJC_BRIDGING_HEADER: LocalAI/LocalAI-Bridging-Header.h
         # llama.cpp / mtmd 头文件（来自 llama.xcframework 的 Headers）
-        HEADER_SEARCH_PATHS: $(SRCROOT)/llama.xcframework/ios-arm64/Headers
+        HEADER_SEARCH_PATHS: $(SRCROOT)/llama.xcframework/ios-arm64/Headers $(SRCROOT)/ssh.xcframework/ios-arm64/Headers $(SRCROOT)/LocalAI/LlamaCore
         # C++20 + 多模态开关
         CLANG_CXX_LANGUAGE_STANDARD: c++20
         OTHER_CPLUSPLUSFLAGS: -DBRIDGE_ENABLE_MTMD -std=c++20

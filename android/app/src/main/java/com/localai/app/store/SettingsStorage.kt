@@ -37,6 +37,13 @@ object SettingsStorage {
                         else -> "web"
                     },
                     searxngURL = o.optString("searxngURL", ""),
+                    sshHost = o.optString("sshHost", ""),
+                    sshPort = o.optInt("sshPort", 22),
+                    sshUser = o.optString("sshUser", ""),
+                    sshAuthType = o.optString("sshAuthType", "password"),
+                    sshPassword = o.optString("sshPassword", ""),
+                    sshPrivateKey = o.optString("sshPrivateKey", ""),
+                    sshPassphrase = o.optString("sshPassphrase", ""),
                 )
             }.getOrElse { ModelSettings() }
         }
@@ -52,6 +59,13 @@ object SettingsStorage {
                 put("gpuLayers", value.gpuLayers)
                 put("searchEngine", value.searchEngine)
                 put("searxngURL", value.searxngURL)
+                put("sshHost", value.sshHost)
+                put("sshPort", value.sshPort)
+                put("sshUser", value.sshUser)
+                put("sshAuthType", value.sshAuthType)
+                put("sshPassword", value.sshPassword)
+                put("sshPrivateKey", value.sshPrivateKey)
+                put("sshPassphrase", value.sshPassphrase)
             }
             prefs.edit().putString(KEY, o.toString()).apply()
         }

@@ -180,6 +180,19 @@ object BuiltInTools {
                 "to" to ParameterSchema("string", "目标单位"),
             )
         ),
+        AgentToolDefinition(
+            "ssh", "ssh", "通过 SSH 在远程服务器上执行命令（默认使用设置中的 SSH 连接，也可在参数中临时覆盖）。支持密码(password)与私钥PEM(key)两种认证。参数：command(必填)要执行的命令；host/user/port 可选覆盖；auth_type 可选 password/key；password/private_key/passphrase 可选覆盖",
+            mapOf(
+                "command" to ParameterSchema("string", "要在远程执行的命令（必填），如 uname -a、df -h、systemctl status nginx"),
+                "host" to ParameterSchema("string", "主机地址（可选，默认使用设置中的主机）"),
+                "user" to ParameterSchema("string", "登录用户名（可选，默认使用设置中的用户名）"),
+                "port" to ParameterSchema("number", "端口（可选，默认 22 或设置中的端口）"),
+                "auth_type" to ParameterSchema("string", "认证方式", listOf("password", "key")),
+                "password" to ParameterSchema("string", "密码（auth_type=password 时使用；留空则用设置中的密码）"),
+                "private_key" to ParameterSchema("string", "私钥 PEM 内容（auth_type=key 时使用；留空则用设置中的私钥）"),
+                "passphrase" to ParameterSchema("string", "私钥口令（可选，留空则用设置中的口令）"),
+            )
+        ),
     )
 
     /** 执行工具。arguments 为 JSON 解析出的 Map。 */
@@ -208,6 +221,7 @@ object BuiltInTools {
         "password_generate" -> executePasswordGenerate(arguments)
         "roman" -> executeRoman(arguments)
         "unit_convert" -> executeUnitConvert(arguments)
+        "ssh" -> executeSSH(arguments)
         else -> "未知工具: $toolName"
     }
 
@@ -670,6 +684,64 @@ object BuiltInTools {
         val out = baseToUnit(to, base) ?: return "错误: 未知单位「$to」"
         val text = if (out == out.roundToInt().toDouble()) out.roundToInt().toString() else String.format("%.6g", out)
         return "$valueNum $from = $text $to"
+    }
+
+    // SSH 远程命令执行（JSch：密码 / PEM 私钥）
+    private fun executeSSH(arguments: Map<String, Any?>): String {
+        val command = (arguments["command"] as? String)?.trim()?.takeIf { it.isNotEmpty() }
+            ?: return "错误: 缺少 command 参数（要在远程执行的命令）"
+        val s = com.localai.app.store.SettingsStorage.settings
+        val host = (arguments["host"] as? String)?.trim()?.takeIf { it.isNotEmpty() } ?: s.sshHost.trim()
+        if (host.isEmpty()) return "错误: 未配置 SSH 主机（请在「设置 → SSH 连接」填写，或提供 host）"
+        val user = (arguments["user"] as? String)?.trim()?.takeIf { it.isNotEmpty() } ?: s.sshUser.trim()
+        if (user.isEmpty()) return "错误: 未配置 SSH 用户名（请在设置中填写，或提供 user 参数）"
+        val port = (arguments["port"] as? Number)?.toInt() ?: if (s.sshPort > 0) s.sshPort else 22
+
+        val authArg = (arguments["auth_type"] as? String)?.lowercase()?.trim() ?: ""
+        val useKey = if (authArg.isNotEmpty()) {
+            authArg == "key" || authArg == "privatekey" || authArg == "pem"
+        } else {
+            s.sshAuthType.lowercase() == "key"
+        }
+
+        val password = (arguments["password"] as? String)?.takeIf { it.isNotBlank() } ?: s.sshPassword
+        val privateKey = (arguments["private_key"] as? String)?.takeIf { it.isNotBlank() } ?: s.sshPrivateKey
+        val passphrase = (arguments["passphrase"] as? String)?.takeIf { it.isNotBlank() } ?: s.sshPassphrase
+
+        return try {
+            val jsch = com.jcraft.jsch.JSch()
+            if (useKey) {
+                if (privateKey.isBlank()) return "错误: 使用私钥认证但未提供私钥（请在设置填写，或提供 private_key 参数）"
+                val passBytes = if (passphrase.isBlank()) null else passphrase.toByteArray(Charsets.UTF_8)
+                jsch.addIdentity("ssh-key", privateKey.toByteArray(Charsets.UTF_8), null, passBytes)
+            }
+            val session = jsch.getSession(user, host, port)
+            if (!useKey) session.setPassword(password)
+            session.setConfig("StrictHostKeyChecking", "no")
+            session.setConfig("PreferredAuthentications", if (useKey) "publickey" else "password")
+            session.connect(15000)
+
+            val channel = session.openChannel("exec") as com.jcraft.jsch.ChannelExec
+            channel.setCommand(command)
+            val out = StringBuilder()
+            val collector = object : java.io.OutputStream() {
+                @Synchronized override fun write(b: Int) { out.append(b.toChar()) }
+                @Synchronized override fun write(b: ByteArray, off: Int, len: Int) {
+                    out.append(String(b, off, len, Charsets.UTF_8))
+                }
+            }
+            channel.setOutputStream(collector)
+            channel.setErrStream(collector)
+            channel.connect(15000)
+            var guard = 0
+            while (!channel.isClosed && guard < 200) { Thread.sleep(100); guard++ }
+            val exitCode = channel.exitStatus
+            channel.disconnect()
+            session.disconnect()
+            "命令退出码: ${exitCode ?: -1}\n--- 输出 ---\n$out"
+        } catch (e: Exception) {
+            "SSH 执行失败: ${e.message ?: e.javaClass.simpleName}"
+        }
     }
 }
 

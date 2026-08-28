@@ -13,8 +13,8 @@ android {
         applicationId = "com.localai.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 4
-        versionName = "0.3.3"
+        versionCode = 5
+        versionName = "0.3.4"
         ndk {
             abiFilters += listOf("arm64-v8a")
         }
@@ -50,6 +50,8 @@ dependencies {
     implementation("androidx.documentfile:documentfile:1.0.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     implementation("org.json:json:20240303")
+    // SSH（Agent ssh 工具）：纯 Java 实现，支持密码与 PEM 私钥
+    implementation("com.jcraft:jsch:0.1.55")
 
     testImplementation("junit:junit:4.13.2")
 }

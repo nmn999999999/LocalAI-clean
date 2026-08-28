@@ -181,6 +181,22 @@ struct ModelSettings: Codable, Sendable {
     /// API 最大 token 数
     var apiMaxTokens: Int
 
+    // MARK: - SSH 配置（Agent `ssh` 工具默认连接）
+    /// 默认 SSH 主机
+    var sshHost: String
+    /// 默认 SSH 端口
+    var sshPort: Int
+    /// 默认 SSH 用户名
+    var sshUser: String
+    /// 认证方式："password" 或 "key"
+    var sshAuthType: String
+    /// 密码（authType == "password" 时使用）
+    var sshPassword: String
+    /// 私钥 PEM（authType == "key" 时使用）
+    var sshPrivateKey: String
+    /// 私钥口令（可选）
+    var sshPassphrase: String
+
     init(
         temperature: Double = 0.7,
         topP: Double = 0.9,
@@ -199,7 +215,14 @@ struct ModelSettings: Codable, Sendable {
         apiKey: String = "",
         apiModel: String = "gpt-4o-mini",
         apiTemperature: Double = 0.7,
-        apiMaxTokens: Int = 4096
+        apiMaxTokens: Int = 4096,
+        sshHost: String = "",
+        sshPort: Int = 22,
+        sshUser: String = "",
+        sshAuthType: String = "password",
+        sshPassword: String = "",
+        sshPrivateKey: String = "",
+        sshPassphrase: String = ""
     ) {
         self.temperature = temperature
         self.topP = topP
@@ -219,6 +242,13 @@ struct ModelSettings: Codable, Sendable {
         self.apiModel = apiModel
         self.apiTemperature = apiTemperature
         self.apiMaxTokens = apiMaxTokens
+        self.sshHost = sshHost
+        self.sshPort = sshPort
+        self.sshUser = sshUser
+        self.sshAuthType = sshAuthType
+        self.sshPassword = sshPassword
+        self.sshPrivateKey = sshPrivateKey
+        self.sshPassphrase = sshPassphrase
     }
 
     static let `default` = ModelSettings()
@@ -227,7 +257,8 @@ struct ModelSettings: Codable, Sendable {
     enum CodingKeys: String, CodingKey {
         case temperature, topP, topK, maxTokens, contextLength, systemPrompt,
              gpuLayers, searchEngine, searxngURL, showThinking, showToolCalls, useMmap,
-             apiEnabled, apiEndpoint, apiKey, apiModel, apiTemperature, apiMaxTokens
+             apiEnabled, apiEndpoint, apiKey, apiModel, apiTemperature, apiMaxTokens,
+             sshHost, sshPort, sshUser, sshAuthType, sshPassword, sshPrivateKey, sshPassphrase
     }
 
     init(from decoder: Decoder) throws {
@@ -255,6 +286,13 @@ struct ModelSettings: Codable, Sendable {
         apiModel = try c.decodeIfPresent(String.self, forKey: .apiModel) ?? "gpt-4o-mini"
         apiTemperature = try c.decodeIfPresent(Double.self, forKey: .apiTemperature) ?? 0.7
         apiMaxTokens = try c.decodeIfPresent(Int.self, forKey: .apiMaxTokens) ?? 4096
+        sshHost = try c.decodeIfPresent(String.self, forKey: .sshHost) ?? ""
+        sshPort = try c.decodeIfPresent(Int.self, forKey: .sshPort) ?? 22
+        sshUser = try c.decodeIfPresent(String.self, forKey: .sshUser) ?? ""
+        sshAuthType = try c.decodeIfPresent(String.self, forKey: .sshAuthType) ?? "password"
+        sshPassword = try c.decodeIfPresent(String.self, forKey: .sshPassword) ?? ""
+        sshPrivateKey = try c.decodeIfPresent(String.self, forKey: .sshPrivateKey) ?? ""
+        sshPassphrase = try c.decodeIfPresent(String.self, forKey: .sshPassphrase) ?? ""
     }
 
     func encode(to encoder: Encoder) throws {
@@ -277,5 +315,12 @@ struct ModelSettings: Codable, Sendable {
         try c.encode(apiModel, forKey: .apiModel)
         try c.encode(apiTemperature, forKey: .apiTemperature)
         try c.encode(apiMaxTokens, forKey: .apiMaxTokens)
+        try c.encode(sshHost, forKey: .sshHost)
+        try c.encode(sshPort, forKey: .sshPort)
+        try c.encode(sshUser, forKey: .sshUser)
+        try c.encode(sshAuthType, forKey: .sshAuthType)
+        try c.encode(sshPassword, forKey: .sshPassword)
+        try c.encode(sshPrivateKey, forKey: .sshPrivateKey)
+        try c.encode(sshPassphrase, forKey: .sshPassphrase)
     }
 }

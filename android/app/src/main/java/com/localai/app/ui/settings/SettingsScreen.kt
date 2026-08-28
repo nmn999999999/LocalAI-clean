@@ -112,6 +112,90 @@ fun SettingsScreen(modifier: Modifier = Modifier) {
         }
 
         Card {
+            Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("SSH 连接", style = MaterialTheme.typography.titleSmall)
+
+                var host by remember { mutableStateOf(settings.sshHost) }
+                OutlinedTextField(
+                    value = host,
+                    onValueChange = { host = it; settings = settings.copy(sshHost = it) },
+                    label = { Text("主机") },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+
+                var portText by remember { mutableStateOf(settings.sshPort.toString()) }
+                OutlinedTextField(
+                    value = portText,
+                    onValueChange = {
+                        portText = it
+                        settings = settings.copy(sshPort = it.toIntOrNull() ?: 22)
+                    },
+                    label = { Text("端口") },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+
+                var user by remember { mutableStateOf(settings.sshUser) }
+                OutlinedTextField(
+                    value = user,
+                    onValueChange = { user = it; settings = settings.copy(sshUser = it) },
+                    label = { Text("用户名") },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("认证方式", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                    androidx.compose.material3.FilterChip(
+                        selected = settings.sshAuthType != "key",
+                        onClick = { settings = settings.copy(sshAuthType = "password") },
+                        label = { Text("密码") },
+                    )
+                    Spacer(Modifier.padding(4.dp))
+                    androidx.compose.material3.FilterChip(
+                        selected = settings.sshAuthType == "key",
+                        onClick = { settings = settings.copy(sshAuthType = "key") },
+                        label = { Text("私钥") },
+                    )
+                }
+
+                if (settings.sshAuthType == "key") {
+                    var keyText by remember { mutableStateOf(settings.sshPrivateKey) }
+                    OutlinedTextField(
+                        value = keyText,
+                        onValueChange = { keyText = it; settings = settings.copy(sshPrivateKey = it) },
+                        label = { Text("私钥 (PEM)") },
+                        minLines = 4,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    var sf by remember { mutableStateOf(settings.sshPassphrase) }
+                    OutlinedTextField(
+                        value = sf,
+                        onValueChange = { sf = it; settings = settings.copy(sshPassphrase = it) },
+                        label = { Text("私钥口令（可选）") },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                } else {
+                    var pw by remember { mutableStateOf(settings.sshPassword) }
+                    OutlinedTextField(
+                        value = pw,
+                        onValueChange = { pw = it; settings = settings.copy(sshPassword = it) },
+                        label = { Text("密码") },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+
+                Button(onClick = { SettingsStorage.settings = settings }, modifier = Modifier.fillMaxWidth()) {
+                    Text("保存 SSH 配置")
+                }
+
+                Text(
+                    "供 Agent 的 ssh 工具使用：在对话中让 AI「在服务器上执行 xxx」即可。账号信息仅存于本机，私钥不会上传。工具参数可临时覆盖主机/端口/用户/命令。",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+
+        Card {
             Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("内存优化", style = MaterialTheme.typography.titleSmall)
 

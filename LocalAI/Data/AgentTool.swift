@@ -293,6 +293,21 @@ enum BuiltInTools {
                 "to": .init(type: "string", description: "目标单位", enumValues: nil)
             ]
         ),
+        AgentToolDefinition(
+            id: "ssh",
+            name: "ssh",
+            description: "通过 SSH 在远程服务器上执行命令（默认使用「设置 → SSH 连接」中配置的主机/账号，也可在参数中临时覆盖）。支持密码(password)与私钥PEM(key)两种认证。参数：command(必填)要执行的命令；host/user/port 可选覆盖默认连接；auth_type 可选 password/key；password/private_key/passphrase 可选覆盖默认凭据",
+            parameters: [
+                "command": .init(type: "string", description: "要在远程执行的命令（必填），如 uname -a、df -h、systemctl status nginx", enumValues: nil),
+                "host": .init(type: "string", description: "主机地址（可选，默认使用设置中的主机）", enumValues: nil),
+                "user": .init(type: "string", description: "登录用户名（可选，默认使用设置中的用户名）", enumValues: nil),
+                "port": .init(type: "number", description: "端口（可选，默认 22 或设置中的端口）", enumValues: nil),
+                "auth_type": .init(type: "string", description: "认证方式", enumValues: ["password", "key"]),
+                "password": .init(type: "string", description: "密码（auth_type=password 时使用；留空则用设置中的密码）", enumValues: nil),
+                "private_key": .init(type: "string", description: "私钥 PEM 内容（auth_type=key 时使用；留空则用设置中的私钥）", enumValues: nil),
+                "passphrase": .init(type: "string", description: "私钥口令（可选，留空则用设置中的口令）", enumValues: nil)
+            ]
+        ),
     ]
 
     // MARK: - 执行入口
@@ -329,6 +344,7 @@ enum BuiltInTools {
         case "password_generate": return executePasswordGenerate(arguments: arguments)
         case "roman":           return executeRoman(arguments: arguments)
         case "unit_convert":    return executeUnitConvert(arguments: arguments)
+        case "ssh":             return executeSSH(arguments: arguments)
         default:
             return "未知工具: \(toolName)"
         }
@@ -1158,5 +1174,76 @@ enum BuiltInTools {
         guard let out = baseToUnit(to, base: base) else { return "错误: 未知单位「\(to)」" }
         let text = (out == out.rounded()) ? String(Int64(out)) : String(format: "%.6g", out)
         return "\(valueNum) \(from) = \(text) \(to)"
+    }
+
+    // MARK: - SSH 远程命令执行（C 桥接 ssh_exec，底层 libssh2 + mbedTLS）
+
+    private static func trimmed(_ s: String?) -> String {
+        (s ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func executeSSH(arguments: [String: Any]) -> String {
+        let command = trimmed(arguments["command"] as? String)
+        guard !command.isEmpty else {
+            return "错误: 缺少 command 参数（要在远程执行的命令）"
+        }
+        let s = SettingsStorage.shared.settings
+        let host = trimmed(arguments["host"] as? String).isEmpty
+            ? trimmed(s.sshHost) : trimmed(arguments["host"] as? String)
+        guard !host.isEmpty else {
+            return "错误: 未配置 SSH 主机（请在「设置 → SSH 连接」填写，或在工具参数中提供 host）"
+        }
+        let user = trimmed(arguments["user"] as? String).isEmpty
+            ? trimmed(s.sshUser) : trimmed(arguments["user"] as? String)
+        guard !user.isEmpty else {
+            return "错误: 未配置 SSH 用户名（请在设置中填写，或提供 user 参数）"
+        }
+        let port = Int32((arguments["port"] as? NSNumber)?.intValue
+                         ?? (s.sshPort > 0 ? s.sshPort : 22))
+
+        let authArg = trimmed(arguments["auth_type"] as? String).lowercased()
+        let useKey: Bool
+        if !authArg.isEmpty {
+            useKey = (authArg == "key" || authArg == "privatekey" || authArg == "pem")
+        } else {
+            useKey = (trimmed(s.sshAuthType).lowercased() == "key")
+        }
+
+        let password = trimmed(arguments["password"] as? String).isEmpty
+            ? s.sshPassword : (arguments["password"] as? String) ?? ""
+        let privateKey = trimmed(arguments["private_key"] as? String).isEmpty
+            ? s.sshPrivateKey : (arguments["private_key"] as? String) ?? ""
+        let passphrase = trimmed(arguments["passphrase"] as? String).isEmpty
+            ? s.sshPassphrase : (arguments["passphrase"] as? String) ?? ""
+
+        if useKey {
+            guard !trimmed(privateKey).isEmpty else {
+                return "错误: 使用私钥认证但未提供私钥（请在设置填写，或提供 private_key 参数）"
+            }
+        } else {
+            guard !trimmed(password).isEmpty else {
+                return "错误: 密码为空，请提供密码（设置中填写或传 password 参数）"
+            }
+        }
+
+        // utf8CString 以 NUL 结尾；用 Array 包一层以便隐式转为 UnsafePointer<CChar>
+        let hostC = Array(host.utf8CString)
+        let userC = Array(user.utf8CString)
+        let pwC = Array(password.utf8CString)
+        let keyC = Array(privateKey.utf8CString)
+        let passC = Array(passphrase.utf8CString)
+        let cmdC = Array(command.utf8CString)
+
+        var outBuf = [CChar](repeating: 0, count: 65536)
+        let rc = ssh_exec(hostC, port, userC,
+                         useKey ? 1 : 0,
+                         pwC, keyC, passC, cmdC,
+                         &outBuf, Int32(outBuf.count))
+        let output = outBuf.withUnsafeBufferPointer { String(cString: $0.baseAddress!) }
+
+        if rc < 0 {
+            return "SSH 执行失败（错误码 \(rc)）: \(output)"
+        }
+        return "命令退出码: \(rc)\n--- 输出 ---\n\(output)"
     }
 }

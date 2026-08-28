@@ -22,6 +22,7 @@ struct SettingsView: View {
                     memoryCard
                     systemPromptCard
                     searchCard
+                    sshCard
                     aboutCard
                     dangerZone
                 }
@@ -252,6 +253,93 @@ struct SettingsView: View {
     }
 
     // MARK: - 关于
+
+    // MARK: - SSH 配置（Agent ssh 工具默认连接）
+
+    private var sshCard: some View {
+        GlassCard {
+            VStack(alignment: .leading, spacing: 14) {
+                SectionHeader(title: "SSH 连接", systemImage: "terminal")
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("主机").font(.subheadline)
+                    TextField("例如 192.168.1.10 或 example.com", text: $storage.settings.sshHost)
+                        .textFieldStyle(.plain)
+                        .padding(10)
+                        .background(.quaternary, in: .rect(cornerRadius: 10))
+                        .font(.caption)
+                }
+
+                HStack(spacing: 12) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("端口").font(.subheadline)
+                        TextField("22", value: $storage.settings.sshPort, format: .number)
+                            .textFieldStyle(.plain)
+                            .padding(10)
+                            .background(.quaternary, in: .rect(cornerRadius: 10))
+                            .font(.caption)
+                            .keyboardType(.numberPad)
+                    }
+                    .frame(maxWidth: 110)
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("用户名").font(.subheadline)
+                        TextField("root", text: $storage.settings.sshUser)
+                            .textFieldStyle(.plain)
+                            .padding(10)
+                            .background(.quaternary, in: .rect(cornerRadius: 10))
+                            .font(.caption)
+                    }
+                }
+
+                Picker("认证方式", selection: $storage.settings.sshAuthType) {
+                    Text("密码").tag("password")
+                    Text("私钥").tag("key")
+                }
+                .pickerStyle(.segmented)
+
+                if storage.settings.sshAuthType == "password" {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("密码").font(.subheadline)
+                        SecureField("登录密码", text: $storage.settings.sshPassword)
+                            .textFieldStyle(.plain)
+                            .padding(10)
+                            .background(.quaternary, in: .rect(cornerRadius: 10))
+                            .font(.caption)
+                    }
+                } else {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("私钥 (PEM)").font(.subheadline)
+                        TextEditor(text: $storage.settings.sshPrivateKey)
+                            .font(.caption.monospaced())
+                            .frame(minHeight: 110, maxHeight: 200)
+                            .padding(6)
+                            .background(.quaternary, in: .rect(cornerRadius: 10))
+                            .overlay(alignment: .topLeading) {
+                                if storage.settings.sshPrivateKey.isEmpty {
+                                    Text("粘贴 -----BEGIN ... PRIVATE KEY----- 内容")
+                                        .font(.caption2)
+                                        .foregroundStyle(.tertiary)
+                                        .padding(10)
+                                }
+                            }
+                    }
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("私钥口令（可选）").font(.subheadline)
+                        SecureField("留空表示无口令", text: $storage.settings.sshPassphrase)
+                            .textFieldStyle(.plain)
+                            .padding(10)
+                            .background(.quaternary, in: .rect(cornerRadius: 10))
+                            .font(.caption)
+                    }
+                }
+
+                Text("供 Agent 的 ssh 工具使用：在对话中让 AI「在服务器上执行 xxx」即可。账号信息仅存于本机，私钥不会上传。工具参数可临时覆盖主机/端口/用户/命令。")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
 
     private var aboutCard: some View {
         GlassCard {

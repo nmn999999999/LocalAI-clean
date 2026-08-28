@@ -14,4 +14,12 @@ data class ModelSettings(
     var searxngURL: String = "",
     // 使用内存映射(mmap)加载模型，减少内存占用
     var useMmap: Boolean = true,
+    // SSH 连接（Agent ssh 工具默认连接）
+    var sshHost: String = "",
+    var sshPort: Int = 22,
+    var sshUser: String = "",
+    var sshAuthType: String = "password", // "password" | "key"
+    var sshPassword: String = "",
+    var sshPrivateKey: String = "",
+    var sshPassphrase: String = "",
 )
