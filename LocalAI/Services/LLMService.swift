@@ -164,9 +164,15 @@ final class LLMService: ObservableObject {
     }
 
     /// 创建 llama.cpp(GGUF) 引擎（本地推理，支持多模态）。
+    /// 注意：`LlamaSwiftEngine.init` 内部是同步阻塞的 C 调用 `llama_bridge_load_model`
+    /// （含 ggml/Metal 后端初始化），耗时数百毫秒。若在主线程执行会卡 UI
+    /// （见 UIKit-runloop 卡顿报告）。用 detached 切到后台线程跑，
+    /// 引擎创建完成后再回到调用方 actor（MainActor）写 @Published 状态。
     private func makeLlamaEngine(url: URL) async throws -> LLMEngine {
         let gpuLayers = SettingsStorage.shared.settings.gpuLayers
-        return try await LlamaSwiftEngine(modelURL: url, gpuLayers: Int32(gpuLayers))
+        return try await Task.detached(priority: .userInitiated) {
+            try await LlamaSwiftEngine(modelURL: url, gpuLayers: Int32(gpuLayers))
+        }.value
     }
 }
 

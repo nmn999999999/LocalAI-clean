@@ -24,6 +24,10 @@ final class AgentService: ObservableObject {
     /// 到达软上限前一轮会先通知模型强制收尾；若仍无暗号则优雅退出并返回最后一轮内容。
     static let softIterationLimit = 50
 
+    /// 工作历史上限（条数）。超过后丢弃最旧的对话消息（保留 system 工具说明），
+    /// 防止超长 Agent 会话把 prompt 撑爆上下文、并降低反复重编码的开销。
+    static let maxWorkingMessages = 48
+
     /// Agent 循环结束「暗号」：模型给出最终回答前必须先输出它，
     /// 循环据此判定"模型已收集够信息，可以结束"。
     static let endSignal = "[[FINAL_ANSWER]]"
@@ -76,7 +80,7 @@ final class AgentService: ObservableObject {
             // 超过软上限仍未结束：优雅退出，返回最后一轮内容
             if iteration > Self.softIterationLimit { break }
 
-            let promptMessages = withToolInstructions(history: workingHistory, tools: toolsEnabledTools)
+            let promptMessages = withToolInstructions(history: Self.trimmedHistory(workingHistory), tools: toolsEnabledTools)
 
             let raw: String
             do {
@@ -159,6 +163,26 @@ final class AgentService: ObservableObject {
 
     func reset() {
         steps.removeAll()
+    }
+
+    /// 把工作历史裁剪到最多 `maxWorkingMessages` 条：保留 system 消息（工具说明所在），
+    /// 丢弃最旧的对话消息，保留最近的上下文。返回新的数组，不修改入参。
+    private static func trimmedHistory(_ history: [ChatMessage]) -> [ChatMessage] {
+        // 上限内无需裁剪
+        if history.count <= maxWorkingMessages { return history }
+
+        var system: ChatMessage?
+        var rest: [ChatMessage] = []
+        for m in history {
+            if m.role == .system, system == nil {
+                system = m          // system 只保留第一条（含工具说明）
+            } else {
+                rest.append(m)
+            }
+        }
+        let keep = max(0, maxWorkingMessages - (system != nil ? 1 : 0))
+        let tail = rest.suffix(keep)
+        return (system.map { [$0] } ?? []) + Array(tail)
     }
 
     // MARK: - 工具说明注入
