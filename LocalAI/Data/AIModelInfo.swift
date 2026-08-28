@@ -98,16 +98,38 @@ struct AIModelInfo: Identifiable, Hashable, Codable {
             repo: "RichardErkhov/apple_-_OpenELM-1_1B-Instruct-gguf",
             fileName: "OpenELM-1_1B-Instruct.Q4_K_M.gguf",
             sizeDescription: "~0.63 GB",
-            description: "Apple 官方开源高效语言模型，体量极小，任意 iPhone 都能离线跑（首启默认自动下载并加载）",
+            description: "Apple 官方开源高效语言模型，体量极小，任意 iPhone 都能离线跑；适合低内存设备的轻量备用（非默认）",
             templateType: .chatML,
             supportsMultimodal: false,
             supportsToolCalling: false
         ),
+        AIModelInfo(
+            id: "phi-4-mini-3.8b-q4km",
+            name: "Phi-4-mini 3.8B",
+            repo: "unsloth/Phi-4-mini-instruct-GGUF",
+            fileName: "Phi-4-mini-instruct-Q4_K_M.gguf",
+            sizeDescription: "~2.0 GB",
+            description: "微软「小钢炮」：非 Qwen 里工具调用/指令遵循最稳，适合长期跑 Agent；中文一般但可用（首启默认自动下载并加载）",
+            templateType: .llama3,
+            supportsMultimodal: false,
+            supportsToolCalling: true
+        ),
+        AIModelInfo(
+            id: "minicpm5-1b-q4km",
+            name: "MiniCPM5 1B",
+            repo: "openbmb/MiniCPM5-1B-GGUF",
+            fileName: "MiniCPM5-1B-Q4_K_M.gguf",
+            sizeDescription: "~0.66 GB",
+            description: "面壁/清华系 1B 小模型，非 Qwen 里中文最强，任意 iPhone 可跑；长 Agent 循环工具调用偏脆",
+            templateType: .llama3,
+            supportsMultimodal: false,
+            supportsToolCalling: true
+        ),
     ]
 
-    /// 首启时优先下载并自动加载的默认模型（Apple OpenELM：体积最小、兼容最好、国内镜像可直连）。
+    /// 首启时优先下载并自动加载的默认模型（Phi-4-mini 3.8B：非 Qwen 里工具调用/指令遵循最稳，国内镜像可直连）。
     static var defaultModel: AIModelInfo {
-        catalog.first { $0.id == "openelm-1.1b-q4km" } ?? catalog[0]
+        catalog.first { $0.id == "phi-4-mini-3.8b-q4km" } ?? catalog[0]
     }
 }
 
