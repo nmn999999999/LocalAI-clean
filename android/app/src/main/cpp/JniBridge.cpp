@@ -45,12 +45,12 @@ JNIEXPORT jboolean JNICALL
 Java_com_localai_app_llm_LlamaEngine_nativeLoadModel(
         JNIEnv * env, jobject,
         jlong handle, jstring modelPath, jstring mmprojPath,
-        jint nCtx, jint nGpuLayers, jint nThreads) {
+        jint nCtx, jint nGpuLayers, jint nThreads, jint loadMode) {
     auto * b = reinterpret_cast<llama_bridge *>(handle);
     if (!b) return JNI_FALSE;
     std::string mp = jstring_to_string(env, modelPath);
     std::string mm = jstring_to_string(env, mmprojPath);
-    bool ok = llama_bridge_load_model(b, mp.c_str(), mm.c_str(), nCtx, nGpuLayers, nThreads);
+    bool ok = llama_bridge_load_model(b, mp.c_str(), mm.c_str(), nCtx, nGpuLayers, nThreads, loadMode);
     return ok ? JNI_TRUE : JNI_FALSE;
 }
 

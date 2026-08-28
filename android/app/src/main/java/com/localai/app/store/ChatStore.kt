@@ -38,6 +38,7 @@ object ChatStore {
     val currentId: StateFlow<String?> = _currentId
 
     private var saveTask: Thread? = null
+    private var lastSavedData: String? = null
 
     private val file: File
         get() = File(context.filesDir, "conversations.json")
@@ -146,7 +147,10 @@ object ChatStore {
                 put("messages", msgs)
             })
         }
-        runCatching { file.writeText(arr.toString()) }
+        val data = arr.toString()
+        if (data == lastSavedData) return
+        runCatching { file.writeText(data) }
+        lastSavedData = data
     }
 
     private fun load() {

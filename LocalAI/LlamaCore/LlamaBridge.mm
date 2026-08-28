@@ -115,7 +115,8 @@ bool llama_bridge_load_model(llama_bridge * b,
                              const char * mmproj_path,
                              int n_ctx,
                              int n_gpu_layers,
-                             int n_threads) {
+                             int n_threads,
+                             int load_mode) {
     if (!b) return false;
     b->n_threads = n_threads > 0 ? n_threads : 4;
     llama_log_set(bridge_log_callback, b);
@@ -126,6 +127,18 @@ bool llama_bridge_load_model(llama_bridge * b,
 
     struct llama_model_params mparams = llama_model_default_params();
     mparams.n_gpu_layers = n_gpu_layers;
+    mparams.load_mode = static_cast<llama_load_mode>(load_mode);
+    // 记录加载参数用于调试
+    {
+        std::ostringstream debug;
+        debug << "[Bridge] Loading model: " << model_path
+              << " | n_ctx=" << n_ctx
+              << " | n_gpu_layers=" << n_gpu_layers
+              << " | load_mode=" << load_mode
+              << " | n_threads=" << n_threads;
+        std::lock_guard<std::mutex> lock(b->log_mutex);
+        b->log_lines.push_back(debug.str());
+    }
     b->model = llama_model_load_from_file(model_path, mparams);
     if (!b->model) {
         set_error(b, with_log(b, std::string("无法加载模型: ") + (model_path ? model_path : "")));
@@ -251,13 +264,16 @@ static int generate(llama_bridge * b, int n_past_start, void (*cb)(const char *,
         common_batch_add(b->batch, token, n_past, {0}, true);
         int rc = llama_decode(b->ctx, b->batch);
         if (rc != 0) {
-            std::string hint = "生成解码失败 (ret=" + std::to_string(rc) + ")";
+            std::string hint = "生成解码失败 (ret=" + std::to_string(rc) + ", n_past=" + std::to_string(n_past) + ")";
             // 检测 Metal / GPU 统一内存不足，给出可操作建议
             {
                 std::lock_guard<std::mutex> lock(b->log_mutex);
+                // 记录更多调试信息
+                b->log_lines.push_back("[Bridge] decode failed at n_past=" + std::to_string(n_past) + " token=" + std::to_string(token));
                 for (const auto & line : b->log_lines) {
                     if (line.find("Insufficient Memory") != std::string::npos ||
-                        line.find("ggml_metal") != std::string::npos) {
+                        line.find("ggml_metal") != std::string::npos ||
+                        line.find("Metal") != std::string::npos) {
                         hint += "\n\n提示：Metal GPU 显存/统一内存不足。\n建议：到「设置」把「GPU 层数」改为 0（纯 CPU），或把「上下文长度」降到 2048 及以下，然后到「模型」页重新加载模型。";
                         break;
                     }

@@ -208,14 +208,20 @@ fun ChatScreen(modifier: Modifier = Modifier) {
                             AgentService.run(history, settings, sink)
                         } else {
                             val sb = StringBuilder()
+                            var tokenBuffer = StringBuilder()
                             LLMService.streamChat(history, settings, imagePaths).collect { token ->
                                 sb.append(token)
-                                withContext(Dispatchers.Main) {
-                                    assistantMsg?.content = sb.toString()
-                                    ChatStore.upsert(conv)
+                                tokenBuffer.append(token)
+                                if (sb.length <= 4 || tokenBuffer.length >= 3) {
+                                    withContext(Dispatchers.Main) {
+                                        assistantMsg?.content = sb.toString()
+                                        ChatStore.upsert(conv)
+                                    }
+                                    tokenBuffer.clear()
                                 }
                             }
                             withContext(Dispatchers.Main) {
+                                assistantMsg?.content = sb.toString()
                                 assistantMsg?.isStreaming = false
                                 ChatStore.upsert(conv)
                             }

@@ -6,12 +6,20 @@ struct SettingsView: View {
     @ObservedObject private var storage = SettingsStorage.shared
 
     @State private var showDeleteConfirm = false
+    @FocusState private var focusedField: Field?
+    
+    private enum Field: Hashable {
+        case apiEndpoint, apiKey, apiModel, systemPrompt
+    }
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
+                    apiModeCard
                     generationCard
+                    displayCard
+                    memoryCard
                     systemPromptCard
                     searchCard
                     aboutCard
@@ -21,6 +29,84 @@ struct SettingsView: View {
             }
             .background(Color(.systemGroupedBackground))
             .navigationTitle("设置")
+            .scrollDismissesKeyboard(.interactively)
+            .onTapGesture {
+                focusedField = nil
+            }
+        }
+    }
+
+    // MARK: - API 模式
+
+    private var apiModeCard: some View {
+        GlassCard {
+            VStack(alignment: .leading, spacing: 14) {
+                SectionHeader(title: "API 模式", systemImage: "cloud")
+                
+                Toggle(isOn: $storage.settings.apiEnabled) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("启用外部 API")
+                            .font(.subheadline)
+                        Text("使用 OpenAI 兼容 API 获取最大性能（如 GPT-4o、Claude、DeepSeek 等）")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .tint(.purple)
+                .onChange(of: storage.settings.apiEnabled) { _, newValue in
+                    if newValue {
+                        llmService.enableApiMode(settings: storage.settings)
+                    } else {
+                        llmService.unload()
+                    }
+                }
+                
+                if storage.settings.apiEnabled {
+                    VStack(alignment: .leading, spacing: 12) {
+                        // API 地址
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("API 端点").font(.subheadline)
+                            TextField("https://api.openai.com/v1/chat/completions", text: $storage.settings.apiEndpoint)
+                                .textFieldStyle(.plain)
+                                .padding(10)
+                                .background(.quaternary, in: .rect(cornerRadius: 10))
+                                .font(.caption)
+                                .focused($focusedField, equals: .apiEndpoint)
+                        }
+                        
+                        // API Key
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("API 密钥").font(.subheadline)
+                            SecureField("sk-...", text: $storage.settings.apiKey)
+                                .textFieldStyle(.plain)
+                                .padding(10)
+                                .background(.quaternary, in: .rect(cornerRadius: 10))
+                                .font(.caption)
+                                .focused($focusedField, equals: .apiKey)
+                        }
+                        
+                        // 模型名称
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("模型名称").font(.subheadline)
+                            TextField("gpt-4o-mini", text: $storage.settings.apiModel)
+                                .textFieldStyle(.plain)
+                                .padding(10)
+                                .background(.quaternary, in: .rect(cornerRadius: 10))
+                                .font(.caption)
+                                .focused($focusedField, equals: .apiModel)
+                        }
+                        
+                        // API 参数
+                        sliderRow("温度", value: $storage.settings.apiTemperature, in: 0...2)
+                        stepperRow("最大 Token", value: $storage.settings.apiMaxTokens, in: 256...16384, step: 256)
+                        
+                        Text("支持所有 OpenAI 兼容 API（OpenAI、Anthropic、DeepSeek、本地 Ollama 等）。密钥仅存储在本地，不会上传。")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+                }
+            }
         }
     }
 
@@ -41,6 +127,59 @@ struct SettingsView: View {
                 Text("参数在下次对话时生效。上下文越长占用内存越高；iPhone 统一内存有限，开启 GPU 层数时建议上下文 ≤2048，否则极易触发 Metal 显存不足。默认 0（纯 CPU）最稳定；调高 GPU 层数可加速，需在「模型」页重新加载模型。")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    // MARK: - 显示设置
+
+    private var displayCard: some View {
+        GlassCard {
+            VStack(alignment: .leading, spacing: 14) {
+                SectionHeader(title: "显示设置", systemImage: "eye")
+
+                Toggle(isOn: $storage.settings.showThinking) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("显示思考过程")
+                            .font(.subheadline)
+                        Text("展示模型的 <think> 标签内容（推理模型如 DeepSeek-R1、Qwen3 的思考过程）")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .tint(.blue)
+
+                Toggle(isOn: $storage.settings.showToolCalls) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("显示工具调用")
+                            .font(.subheadline)
+                        Text("展示 Agent 模式下工具调用的参数和结果")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .tint(.orange)
+            }
+        }
+    }
+
+    // MARK: - 内存优化
+
+    private var memoryCard: some View {
+        GlassCard {
+            VStack(alignment: .leading, spacing: 14) {
+                SectionHeader(title: "内存优化", systemImage: "memorychip")
+
+                Toggle(isOn: $storage.settings.useMmap) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("内存映射加载 (mmap)")
+                            .font(.subheadline)
+                        Text("开启后模型文件映射到虚拟内存，仅访问的页面才加载到RAM，大幅减少内存占用。关闭可提升推理速度但占用更多内存。")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .tint(.green)
             }
         }
     }
@@ -85,6 +224,7 @@ struct SettingsView: View {
                 .lineLimit(3...6)
                 .padding(10)
                 .background(.quaternary, in: .rect(cornerRadius: 12))
+                .focused($focusedField, equals: .systemPrompt)
             }
         }
     }
@@ -118,8 +258,9 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: 8) {
                 SectionHeader(title: "关于", systemImage: "info.circle")
                 infoRow("推理引擎", "llama.cpp (GGUF) + mtmd 多模态")
+                infoRow("API 支持", "OpenAI 兼容格式（GPT-4o/Claude/DeepSeek 等）")
                 infoRow("界面", "SwiftUI · Liquid Glass (iOS 26+)")
-                infoRow("隐私", "全部推理在本机完成，无网络上传")
+                infoRow("隐私", "本地模式：全部推理在本机完成，无网络上传")
             }
         }
     }

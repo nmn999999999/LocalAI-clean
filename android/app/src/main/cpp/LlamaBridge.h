@@ -15,13 +15,16 @@ int  llama_bridge_create(llama_bridge ** out_bridge);
 void llama_bridge_free(llama_bridge * b);
 
 // Load a GGUF model. mmproj_path may be NULL or "" when the model is text-only.
+// load_mode: 1 = LLAMA_LOAD_MODE_MMAP (memory-mapped, reduces RAM usage),
+//            0 = LLAMA_LOAD_MODE_NONE (normal loading, faster but more RAM).
 // Returns true on success; on failure, use llama_bridge_last_error().
 bool llama_bridge_load_model(llama_bridge * b,
                              const char * model_path,
                              const char * mmproj_path,
                              int n_ctx,
                              int n_gpu_layers,
-                             int n_threads);
+                             int n_threads,
+                             int load_mode);
 
 // Returns a UTF-8 error string (valid until the next bridge call).
 const char * llama_bridge_last_error(llama_bridge * b);

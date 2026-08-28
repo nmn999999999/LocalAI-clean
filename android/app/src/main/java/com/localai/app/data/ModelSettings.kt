@@ -12,4 +12,6 @@ data class ModelSettings(
     // 搜索服务："web"（设备直连网页搜索：Bing → DuckDuckGo → 维基百科）或 "wikipedia"（仅维基百科）
     var searchEngine: String = "web",
     var searxngURL: String = "",
+    // 使用内存映射(mmap)加载模型，减少内存占用
+    var useMmap: Boolean = true,
 )

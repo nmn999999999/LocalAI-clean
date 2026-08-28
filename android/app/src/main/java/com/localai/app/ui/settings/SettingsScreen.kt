@@ -113,6 +113,30 @@ fun SettingsScreen(modifier: Modifier = Modifier) {
 
         Card {
             Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("内存优化", style = MaterialTheme.typography.titleSmall)
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("内存映射加载 (mmap)", style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            "开启后模型文件映射到虚拟内存，仅访问的页面才加载到RAM，大幅减少内存占用。",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    androidx.compose.material3.Switch(
+                        checked = settings.useMmap,
+                        onCheckedChange = { settings = settings.copy(useMmap = it) },
+                    )
+                }
+            }
+        }
+
+        Card {
+            Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("关于", style = MaterialTheme.typography.titleSmall)
                 Text("推理引擎: llama.cpp (GGUF) + mtmd 多模态", style = MaterialTheme.typography.bodySmall)
                 Text("界面: Kotlin + Jetpack Compose", style = MaterialTheme.typography.bodySmall)

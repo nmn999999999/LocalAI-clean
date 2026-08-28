@@ -91,8 +91,6 @@ final class AgentService: ObservableObject {
     /// 把 Agent 原始输出清理为可展示给用户的正文：移除结束暗号、工具调用 JSON、markdown 围栏。
     /// 仅用于 Agent 轮次的气泡渲染；普通聊天内容不会经过此处。
     static func cleanDisplayText(_ text: String) -> String {
-        let toolNames = BuiltInTools.allTools.map(\.name)
-
         // 1) 先移除结束暗号（不区分大小写）
         var result = text.replacingOccurrences(of: Self.endSignal, with: "", options: [.caseInsensitive])
 
@@ -100,19 +98,57 @@ final class AgentService: ObservableObject {
         result = result.replacingOccurrences(of: "```json", with: "", options: [.caseInsensitive])
         result = result.replacingOccurrences(of: "```", with: "")
 
-        // 3) 移除工具调用 JSON：找到顶层 {...}，若包含 "name"/"arguments" 且 name 是已知工具名则去掉
+        // 3) 移除工具调用 JSON：找到顶层 {...}，若包含 "name"/"arguments" 则去掉
         for candidate in Self.extractJSONObjects(in: result) {
             let lower = candidate.lowercased()
-            guard lower.contains("\"name\""), lower.contains("\"arguments\"") else { continue }
-            guard let data = candidate.data(using: .utf8),
-                  let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let name = obj["name"] as? String,
-                  toolNames.contains(name)
-            else { continue }
-            result = result.replacingOccurrences(of: candidate, with: "")
+            if lower.contains("\"name\"") && lower.contains("\"arguments\"") {
+                result = result.replacingOccurrences(of: candidate, with: "")
+            }
         }
 
+        // 4) 清理不完整的工具调用 JSON（流式输出中常见）：
+        //    检测 "{\"name": 或 {"name": 开头但尚未闭合的 JSON 片段
+        result = cleanPartialToolCallJSON(result)
+
         return result.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// 清理流式输出中不完整的工具调用 JSON 片段。
+    /// 当模型正在输出工具调用 JSON 但尚未完成时，这些片段会显示在气泡中。
+    private static func cleanPartialToolCallJSON(_ text: String) -> String {
+        var result = text
+
+        // 检测可能的工具调用 JSON 开始：{"name": 或 "name":
+        // 从这个位置开始，如果后面没有完整的闭合 }，则移除从这里到结尾的内容
+        let patterns = ["{\"name\":", "{\"name\":", "{ \"name\":", "{\n\"name\":"]
+        for pattern in patterns {
+            while let range = result.range(of: pattern, options: .caseInsensitive) {
+                let afterStart = result[range.upperBound...]
+                // 检查是否有完整的闭合（深度平衡的 }）
+                var depth = 1
+                var foundClose = false
+                for ch in afterStart {
+                    if ch == "{" { depth += 1 }
+                    else if ch == "}" {
+                        depth -= 1
+                        if depth == 0 {
+                            foundClose = true
+                            break
+                        }
+                    }
+                }
+                if !foundClose {
+                    // 没有找到闭合的 }，移除这个不完整的片段
+                    result.removeSubrange(range.lowerBound..<result.endIndex)
+                } else {
+                    // 找到了闭合，但这个片段可能已经被上面的 extractJSONObjects 处理了
+                    // 跳过这个位置避免无限循环
+                    break
+                }
+            }
+        }
+
+        return result
     }
 
     /// 在对话中执行 Agent 循环，返回最终 assistant 消息内容与全部工具调用记录。
@@ -406,8 +442,10 @@ final class AgentService: ObservableObject {
         return String(oneLine.prefix(maxLength)) + "…"
     }
 
-    /// 粗略提取顶层平衡的 {...} 子串
+    /// 粗略提取顶层平衡的 {...} 子串（快速路径：无花括号直接返回空）
     fileprivate static func extractJSONObjects(in text: String) -> [String] {
+        guard text.contains("{") else { return [] }
+        
         var results: [String] = []
         var depth = 0
         var start: String.Index?

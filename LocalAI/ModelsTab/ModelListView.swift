@@ -108,6 +108,8 @@ struct ModelListView: View {
                     }
                 case .ready(let name):
                     statusRow("\(name) 已就绪", icon: "checkmark.seal.fill", color: .green)
+                case .apiMode(let name):
+                    statusRow("API 模式: \(name)", icon: "cloud.fill", color: .purple)
                 case .failed(let msg):
                     statusRow(msg, icon: "exclamationmark.triangle.fill", color: .red)
                 }

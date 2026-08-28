@@ -10,12 +10,12 @@ final class ChatStore: ObservableObject {
 
     private let saveURL: URL
     private var saveTask: Task<Void, Never>?
+    private var lastSaveData: Data?
 
     init() {
         let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         saveURL = docs.appendingPathComponent("conversations.json")
         load()
-        // 不变式：始终至少存在一个对话，避免视图渲染期间修改状态
         if conversations.isEmpty {
             let conv = Conversation()
             conversations.append(conv)
@@ -83,9 +83,6 @@ final class ChatStore: ObservableObject {
     // MARK: - 持久化
 
     private func scheduleSave() {
-        // 流式生成中的中间状态不落盘：每个 token 都会触发 conversations 变化，
-        // 若照常持久化，主线程会持续做 JSON 编码与写盘（含图片 base64 时文件很大），
-        // 导致主线程卡顿（runloop hang）。等 isStreaming 结束时再保存一次即可。
         if conversations.last?.messages.last?.isStreaming == true { return }
         saveTask?.cancel()
         saveTask = Task {
@@ -98,24 +95,23 @@ final class ChatStore: ObservableObject {
     private func persist() {
         let snapshot = conversations
         let url = saveURL
-        // JSON 编码与写盘移到后台线程，避免阻塞主线程
+        let lastData = lastSaveData
         Task.detached(priority: .utility) {
             let encoder = JSONEncoder()
             encoder.dateEncodingStrategy = .iso8601
             encoder.outputFormatting = [.sortedKeys]
             guard let data = try? encoder.encode(snapshot) else { return }
+            if data == lastData { return }
             try? data.write(to: url, options: .atomic)
         }
     }
 
     private func load() {
         guard let data = try? Data(contentsOf: saveURL) else { return }
+        lastSaveData = data
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         let decoded = (try? decoder.decode([Conversation].self, from: data)) ?? []
-        // 复位遗留的流式标记：磁盘里不该有"正在生成"的消息。
-        // 若历史里残留 isStreaming == true（例如旧版 Agent 会话未正确收尾），
-        // 会让 scheduleSave 守卫误判、导致整段对话永不落盘。
         conversations = decoded.map { conv in
             var c = conv
             c.messages = c.messages.map { m in
@@ -126,5 +122,73 @@ final class ChatStore: ObservableObject {
             return c
         }
         currentConversationID = conversations.first?.id
+    }
+
+    // MARK: - 搜索功能
+
+    struct SearchResult: Identifiable {
+        let id = UUID()
+        let conversationID: UUID
+        let conversationTitle: String
+        let messageID: UUID
+        let messageContent: String
+        let matchRange: NSRange
+        let timestamp: Date
+    }
+
+    func search(query: String) -> [SearchResult] {
+        guard !query.isEmpty else { return [] }
+        
+        var results: [SearchResult] = []
+        
+        for conversation in conversations {
+            for message in conversation.messages {
+                let content = message.content
+                guard let range = content.range(of: query, options: .caseInsensitive) else { continue }
+                
+                let start = content.distance(from: content.startIndex, to: range.lowerBound)
+                let length = content.distance(from: range.lowerBound, to: range.upperBound)
+                let nsRange = NSRange(location: start, length: length)
+                
+                let result = SearchResult(
+                    conversationID: conversation.id,
+                    conversationTitle: conversation.title,
+                    messageID: message.id,
+                    messageContent: content,
+                    matchRange: nsRange,
+                    timestamp: message.timestamp
+                )
+                results.append(result)
+            }
+        }
+        
+        return results.sorted { $0.timestamp > $1.timestamp }
+    }
+
+    func search(query: String, in conversationID: UUID) -> [SearchResult] {
+        guard !query.isEmpty, let conversation = conversation(id: conversationID) else { return [] }
+        
+        var results: [SearchResult] = []
+        
+        for message in conversation.messages {
+            let content = message.content
+            guard let range = content.range(of: query, options: .caseInsensitive) else { continue }
+            
+            let start = content.distance(from: content.startIndex, to: range.lowerBound)
+            let length = content.distance(from: range.lowerBound, to: range.upperBound)
+            let nsRange = NSRange(location: start, length: length)
+            
+            let result = SearchResult(
+                conversationID: conversation.id,
+                conversationTitle: conversation.title,
+                messageID: message.id,
+                messageContent: content,
+                matchRange: nsRange,
+                timestamp: message.timestamp
+            )
+            results.append(result)
+        }
+        
+        return results.sorted { $0.timestamp > $1.timestamp }
     }
 }

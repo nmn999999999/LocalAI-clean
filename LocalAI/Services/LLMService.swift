@@ -53,6 +53,7 @@ final class LLMService: ObservableObject {
         case loading(String)
         case ready(String)
         case failed(String)
+        case apiMode(String)  // API 模式就绪
     }
 
     @Published private(set) var state: EngineState = .idle
@@ -64,12 +65,19 @@ final class LLMService: ObservableObject {
 
     var isModelReady: Bool {
         if case .ready = state { return true }
+        if case .apiMode = state { return true }
+        return false
+    }
+
+    var isApiMode: Bool {
+        if case .apiMode = state { return true }
         return false
     }
 
     var loadedModelName: String? {
         if case .ready(let name) = state { return name }
         if case .loading(let name) = state { return name }
+        if case .apiMode(let name) = state { return name }
         return nil
     }
 
@@ -87,13 +95,33 @@ final class LLMService: ObservableObject {
         }
     }
 
+    /// 切换到 API 模式
+    func enableApiMode(settings: ModelSettings) {
+        unload()
+        let name = settings.apiModel.isEmpty ? "API 模式" : settings.apiModel
+        state = .apiMode(name)
+    }
+
     func unload() {
+        // 先取消所有正在进行的生成任务
         generationTask?.cancel()
         generationTask = nil
-        engine = nil
         isGenerating = false
         partialOutput = ""
+        
+        // 保存引擎引用，清空状态后再释放
+        let oldEngine = engine
+        engine = nil
         state = .idle
+        
+        // 延迟释放引擎，给后台任务时间退出
+        if let oldEngine {
+            Task.detached(priority: .utility) {
+                // 等待一小段时间让正在进行的任务完成
+                try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
+                _ = oldEngine // 确保引擎在此线程释放
+            }
+        }
     }
 
     func stopGeneration() {
@@ -108,9 +136,34 @@ final class LLMService: ObservableObject {
         settings: ModelSettings,
         images: [CGImage] = []
     ) -> AsyncThrowingStream<String, Error> {
+        // API 模式
+        if settings.apiEnabled, case .apiMode = state {
+            return streamChatAPI(history: history, settings: settings)
+        }
+        
+        // 本地模式
         let engine = tryRequireEngine()
         let msgs = toEngineMessages(history, settings: settings)
         return engine.stream(messages: msgs, settings: settings, images: images)
+    }
+
+    /// API 模式流式对话
+    private func streamChatAPI(
+        history: [ChatMessage],
+        settings: ModelSettings
+    ) -> AsyncThrowingStream<String, Error> {
+        let messages = history.map { msg -> [String: String] in
+            var dict: [String: String] = [:]
+            switch msg.role {
+            case .user: dict["role"] = "user"
+            case .assistant: dict["role"] = "assistant"
+            case .system: dict["role"] = "system"
+            case .tool: dict["role"] = "user"  // 工具结果作为用户消息
+            }
+            dict["content"] = msg.content
+            return dict
+        }
+        return APIService.shared.streamChat(messages: messages, settings: settings)
     }
 
     /// 供 Agent 使用：带可选图片的单轮流式调用，聚合返回完整文本。
@@ -119,6 +172,12 @@ final class LLMService: ObservableObject {
         settings: ModelSettings,
         images: [CGImage] = []
     ) async throws -> String {
+        // API 模式
+        if settings.apiEnabled, case .apiMode = state {
+            return try await completeAPI(messages: messages, settings: settings)
+        }
+        
+        // 本地模式
         let engine = tryRequireEngine()
         let msgs = toEngineMessages(messages, settings: settings)
         var result = ""
@@ -127,6 +186,25 @@ final class LLMService: ObservableObject {
             result += token
         }
         return result
+    }
+
+    /// API 模式非流式调用
+    private func completeAPI(
+        messages: [ChatMessage],
+        settings: ModelSettings
+    ) async throws -> String {
+        let msgDicts = messages.map { msg -> [String: String] in
+            var dict: [String: String] = [:]
+            switch msg.role {
+            case .user: dict["role"] = "user"
+            case .assistant: dict["role"] = "assistant"
+            case .system: dict["role"] = "system"
+            case .tool: dict["role"] = "user"
+            }
+            dict["content"] = msg.content
+            return dict
+        }
+        return try await APIService.shared.complete(messages: msgDicts, settings: settings)
     }
 
     /// 多模态：图片 + 提问

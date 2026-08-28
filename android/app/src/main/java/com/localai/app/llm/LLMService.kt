@@ -49,12 +49,14 @@ object LLMService {
         Thread {
             val e = LlamaEngine()
             e.create()
+            val settings = SettingsStorage.settings
             val ok = e.loadModel(
                 modelPath,
                 mmprojPath,
-                SettingsStorage.settings.contextLength,
-                SettingsStorage.settings.gpuLayers,
+                settings.contextLength,
+                settings.gpuLayers,
                 inferThreads(),
+                if (settings.useMmap) 1 else 0,  // 1 = LLAMA_LOAD_MODE_MMAP, 0 = LLAMA_LOAD_MODE_NONE
             )
             if (ok) {
                 synchronized(this) {

@@ -22,7 +22,8 @@ class LlamaEngine : AutoCloseable {
         nCtx: Int,
         nGpuLayers: Int,
         nThreads: Int,
-    ): Boolean = nativeLoadModel(handle, modelPath, mmprojPath ?: "", nCtx, nGpuLayers, nThreads)
+        loadMode: Int = 1,  // 1 = LLAMA_LOAD_MODE_MMAP, 0 = LLAMA_LOAD_MODE_NONE
+    ): Boolean = nativeLoadModel(handle, modelPath, mmprojPath ?: "", nCtx, nGpuLayers, nThreads, loadMode)
 
     /** 返回 0 成功；非 0 用 lastError() 查看详情。callback 在调用线程同步回调。 */
     fun chat(
@@ -49,7 +50,7 @@ class LlamaEngine : AutoCloseable {
     private external fun nativeCreate(): Long
     private external fun nativeLoadModel(
         h: Long, modelPath: String, mmprojPath: String,
-        nCtx: Int, nGpuLayers: Int, nThreads: Int,
+        nCtx: Int, nGpuLayers: Int, nThreads: Int, loadMode: Int,
     ): Boolean
     private external fun nativeChat(
         h: Long, messagesJson: String, settingsJson: String,

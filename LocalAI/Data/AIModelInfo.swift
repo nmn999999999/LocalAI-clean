@@ -160,6 +160,26 @@ struct ModelSettings: Codable, Sendable {
     var searchEngine: String
     /// SearXNG 实例地址（如 https://searx.be 或自建 http://192.168.1.10:8080）
     var searxngURL: String
+    /// 是否显示模型的思考过程（<think> 标签内容）
+    var showThinking: Bool
+    /// 是否显示工具调用过程
+    var showToolCalls: Bool
+    /// 使用内存映射(mmap)加载模型，减少内存占用（仅访问的页面才加载到RAM）
+    var useMmap: Bool
+    
+    // MARK: - API 模式设置
+    /// 是否启用 API 模式（使用外部 API 而非本地模型）
+    var apiEnabled: Bool
+    /// API 端点地址（OpenAI 兼容格式）
+    var apiEndpoint: String
+    /// API 密钥
+    var apiKey: String
+    /// API 模型名称
+    var apiModel: String
+    /// API 温度参数
+    var apiTemperature: Double
+    /// API 最大 token 数
+    var apiMaxTokens: Int
 
     init(
         temperature: Double = 0.7,
@@ -170,7 +190,16 @@ struct ModelSettings: Codable, Sendable {
         systemPrompt: String = "你是一个有帮助的AI助手。请用中文回答。",
         gpuLayers: Int = 0,
         searchEngine: String = "web",
-        searxngURL: String = ""
+        searxngURL: String = "",
+        showThinking: Bool = true,
+        showToolCalls: Bool = true,
+        useMmap: Bool = true,
+        apiEnabled: Bool = false,
+        apiEndpoint: String = "https://api.openai.com/v1/chat/completions",
+        apiKey: String = "",
+        apiModel: String = "gpt-4o-mini",
+        apiTemperature: Double = 0.7,
+        apiMaxTokens: Int = 4096
     ) {
         self.temperature = temperature
         self.topP = topP
@@ -181,6 +210,15 @@ struct ModelSettings: Codable, Sendable {
         self.gpuLayers = gpuLayers
         self.searchEngine = searchEngine
         self.searxngURL = searxngURL
+        self.showThinking = showThinking
+        self.showToolCalls = showToolCalls
+        self.useMmap = useMmap
+        self.apiEnabled = apiEnabled
+        self.apiEndpoint = apiEndpoint
+        self.apiKey = apiKey
+        self.apiModel = apiModel
+        self.apiTemperature = apiTemperature
+        self.apiMaxTokens = apiMaxTokens
     }
 
     static let `default` = ModelSettings()
@@ -188,7 +226,8 @@ struct ModelSettings: Codable, Sendable {
     // 兼容旧存档：新字段缺失时使用默认值，避免整个设置被重置
     enum CodingKeys: String, CodingKey {
         case temperature, topP, topK, maxTokens, contextLength, systemPrompt,
-             gpuLayers, searchEngine, searxngURL
+             gpuLayers, searchEngine, searxngURL, showThinking, showToolCalls, useMmap,
+             apiEnabled, apiEndpoint, apiKey, apiModel, apiTemperature, apiMaxTokens
     }
 
     init(from decoder: Decoder) throws {
@@ -207,6 +246,15 @@ struct ModelSettings: Codable, Sendable {
         default: searchEngine = "web"
         }
         searxngURL = try c.decodeIfPresent(String.self, forKey: .searxngURL) ?? ""
+        showThinking = try c.decodeIfPresent(Bool.self, forKey: .showThinking) ?? true
+        showToolCalls = try c.decodeIfPresent(Bool.self, forKey: .showToolCalls) ?? true
+        useMmap = try c.decodeIfPresent(Bool.self, forKey: .useMmap) ?? true
+        apiEnabled = try c.decodeIfPresent(Bool.self, forKey: .apiEnabled) ?? false
+        apiEndpoint = try c.decodeIfPresent(String.self, forKey: .apiEndpoint) ?? "https://api.openai.com/v1/chat/completions"
+        apiKey = try c.decodeIfPresent(String.self, forKey: .apiKey) ?? ""
+        apiModel = try c.decodeIfPresent(String.self, forKey: .apiModel) ?? "gpt-4o-mini"
+        apiTemperature = try c.decodeIfPresent(Double.self, forKey: .apiTemperature) ?? 0.7
+        apiMaxTokens = try c.decodeIfPresent(Int.self, forKey: .apiMaxTokens) ?? 4096
     }
 
     func encode(to encoder: Encoder) throws {
@@ -220,5 +268,14 @@ struct ModelSettings: Codable, Sendable {
         try c.encode(gpuLayers, forKey: .gpuLayers)
         try c.encode(searchEngine, forKey: .searchEngine)
         try c.encode(searxngURL, forKey: .searxngURL)
+        try c.encode(showThinking, forKey: .showThinking)
+        try c.encode(showToolCalls, forKey: .showToolCalls)
+        try c.encode(useMmap, forKey: .useMmap)
+        try c.encode(apiEnabled, forKey: .apiEnabled)
+        try c.encode(apiEndpoint, forKey: .apiEndpoint)
+        try c.encode(apiKey, forKey: .apiKey)
+        try c.encode(apiModel, forKey: .apiModel)
+        try c.encode(apiTemperature, forKey: .apiTemperature)
+        try c.encode(apiMaxTokens, forKey: .apiMaxTokens)
     }
 }

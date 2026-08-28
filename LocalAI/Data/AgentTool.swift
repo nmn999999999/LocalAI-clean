@@ -194,6 +194,24 @@ enum BuiltInTools {
                 "query": .init(type: "string", description: "搜索关键词", enumValues: nil)
             ]
         ),
+        AgentToolDefinition(
+            id: "regex_extract",
+            name: "regex_extract",
+            description: "使用正则表达式从文本中提取匹配的内容",
+            parameters: [
+                "text": .init(type: "string", description: "要搜索的文本", enumValues: nil),
+                "pattern": .init(type: "string", description: "正则表达式模式", enumValues: nil)
+            ]
+        ),
+        AgentToolDefinition(
+            id: "text_summary",
+            name: "text_summary",
+            description: "对文本进行智能摘要，提取关键信息",
+            parameters: [
+                "text": .init(type: "string", description: "要摘要的文本", enumValues: nil),
+                "max_length": .init(type: "number", description: "摘要最大长度（可选，默认200）", enumValues: nil)
+            ]
+        ),
     ]
 
     // MARK: - 执行入口
@@ -220,6 +238,8 @@ enum BuiltInTools {
         case "note":            return executeNote(arguments: arguments)
         case "clipboard":       return executeClipboard(arguments: arguments)
         case "web_search":      return await executeWebSearch(arguments: arguments)
+        case "regex_extract":   return executeRegexExtract(arguments: arguments)
+        case "text_summary":    return executeTextSummary(arguments: arguments)
         default:
             return "未知工具: \(toolName)"
         }
@@ -657,5 +677,123 @@ enum BuiltInTools {
             }
         }
         return values.count == 1 ? values[0] : nil
+    }
+
+    // MARK: - 正则表达式提取工具
+
+    private static func executeRegexExtract(arguments: [String: Any]) -> String {
+        guard let text = arguments["text"] as? String else {
+            return "错误: 缺少 text 参数"
+        }
+        guard let pattern = arguments["pattern"] as? String else {
+            return "错误: 缺少 pattern 参数"
+        }
+        
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else {
+            return "错误: 无效的正则表达式模式「\(pattern)」"
+        }
+        
+        let nsText = text as NSString
+        let matches = regex.matches(in: text, range: NSRange(location: 0, length: nsText.length))
+        
+        if matches.isEmpty {
+            return "未找到匹配「\(pattern)」的内容"
+        }
+        
+        var results: [String] = []
+        for (i, match) in matches.prefix(20).enumerated() {
+            // 完整匹配
+            let fullMatch = nsText.substring(with: match.range)
+            
+            // 捕获组（如果有）
+            var groups: [String] = []
+            if match.numberOfRanges > 1 {
+                for j in 1..<match.numberOfRanges {
+                    let groupRange = match.range(at: j)
+                    if groupRange.location != NSNotFound {
+                        groups.append(nsText.substring(with: groupRange))
+                    }
+                }
+            }
+            
+            var line = "\(i + 1). \(fullMatch)"
+            if !groups.isEmpty {
+                line += " [捕获组: \(groups.joined(separator: ", "))]"
+            }
+            results.append(line)
+        }
+        
+        return "找到 \(matches.count) 个匹配:\n\(results.joined(separator: "\n"))"
+    }
+
+    // MARK: - 文本摘要工具
+
+    private static func executeTextSummary(arguments: [String: Any]) -> String {
+        guard let text = arguments["text"] as? String else {
+            return "错误: 缺少 text 参数"
+        }
+        
+        let maxLength = (arguments["max_length"] as? NSNumber)?.intValue ?? 200
+        
+        if text.count <= maxLength {
+            return "原文较短，无需摘要:\n\(text)"
+        }
+        
+        // 智能摘要：提取关键句子
+        let sentences = text.components(separatedBy: CharacterSet(charactersIn: "。！？\n"))
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        
+        if sentences.isEmpty {
+            return "无法提取有效内容"
+        }
+        
+        // 简单的关键词提取和句子重要性评分
+        var scoredSentences: [(sentence: String, score: Double)] = []
+        
+        // 常见关键词（中文）
+        let keywords = ["重要", "关键", "核心", "主要", "首先", "其次", "最后", "总结", "结论", 
+                       "important", "key", "main", "first", "conclusion", "summary"]
+        
+        for sentence in sentences {
+            var score = 0.0
+            
+            // 位置得分：开头和结尾的句子更重要
+            if let index = sentences.firstIndex(of: sentence) {
+                if index < 3 { score += 2.0 }
+                if index >= sentences.count - 2 { score += 1.5 }
+            }
+            
+            // 长度得分：中等长度的句子更可能是关键句
+            let length = sentence.count
+            if length > 10 && length < 100 {
+                score += 1.0
+            }
+            
+            // 关键词得分
+            let lowerSentence = sentence.lowercased()
+            for keyword in keywords {
+                if lowerSentence.contains(keyword) {
+                    score += 1.5
+                }
+            }
+            
+            scoredSentences.append((sentence, score))
+        }
+        
+        // 按得分排序，取前几句
+        let topSentences = scoredSentences
+            .sorted { $0.score > $1.score }
+            .prefix(3)
+            .map(\.sentence)
+        
+        var summary = topSentences.joined(separator: "。")
+        
+        // 截断到指定长度
+        if summary.count > maxLength {
+            summary = String(summary.prefix(maxLength - 3)) + "..."
+        }
+        
+        return "摘要:\n\(summary)"
     }
 }

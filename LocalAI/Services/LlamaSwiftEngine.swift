@@ -46,7 +46,8 @@ final class LlamaSwiftEngine: LLMEngine, @unchecked Sendable {
             mmproj ?? "",
             Int32(requestedCtx),
             nGpuLayers,
-            nThreads
+            nThreads,
+            SettingsStorage.shared.settings.useMmap ? 1 : 0  // 1 = LLAMA_LOAD_MODE_MMAP, 0 = LLAMA_LOAD_MODE_NONE
         )
         if !ok {
             let err = String(cString: llama_bridge_last_error(handle))
@@ -55,7 +56,18 @@ final class LlamaSwiftEngine: LLMEngine, @unchecked Sendable {
     }
 
     deinit {
-        if let b = bridge { llama_bridge_free(b) }
+        close()
+    }
+    
+    /// 安全释放资源
+    private func close() {
+        guard let b = bridge else { return }
+        bridge = nil
+        llama_bridge_stop(b)  // 先停止可能正在进行的生成
+        // 在后台线程释放，避免阻塞主线程
+        Task.detached {
+            llama_bridge_free(b)
+        }
     }
 
     // 自动探测同目录下的 mmproj 文件
@@ -145,6 +157,8 @@ final class LlamaSwiftEngine: LLMEngine, @unchecked Sendable {
                     llamaBridgeTokenCallback,
                     ud
                 )
+                let fwd = Unmanaged<TokenForwarder>.fromOpaque(ud).takeUnretainedValue()
+                fwd.flush()
                 Unmanaged<TokenForwarder>.fromOpaque(ud).release()
                 if rc != 0 {
                     let err = String(cString: llama_bridge_last_error(b))
@@ -173,12 +187,23 @@ final class LlamaSwiftEngine: LLMEngine, @unchecked Sendable {
 
 private final class TokenForwarder {
     let continuation: AsyncThrowingStream<String, Error>.Continuation
+    private var buffer = ""
     init(continuation: AsyncThrowingStream<String, Error>.Continuation) {
         self.continuation = continuation
     }
     func yield(_ piece: UnsafePointer<CChar>) {
         let s = String(cString: piece, encoding: .utf8) ?? String(cString: piece, encoding: .ascii) ?? ""
-        continuation.yield(s)
+        buffer += s
+        if buffer.count >= 4 || s.last == "\n" || s.last == "。" || s.last == "." {
+            continuation.yield(buffer)
+            buffer = ""
+        }
+    }
+    func flush() {
+        if !buffer.isEmpty {
+            continuation.yield(buffer)
+            buffer = ""
+        }
     }
 }
 

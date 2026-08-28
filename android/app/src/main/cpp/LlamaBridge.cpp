@@ -115,7 +115,8 @@ bool llama_bridge_load_model(llama_bridge * b,
                              const char * mmproj_path,
                              int n_ctx,
                              int n_gpu_layers,
-                             int n_threads) {
+                             int n_threads,
+                             int load_mode) {
     if (!b) return false;
     b->n_threads = n_threads > 0 ? n_threads : 4;
     llama_log_set(bridge_log_callback, b);
@@ -126,6 +127,7 @@ bool llama_bridge_load_model(llama_bridge * b,
 
     struct llama_model_params mparams = llama_model_default_params();
     mparams.n_gpu_layers = n_gpu_layers;
+    mparams.load_mode = static_cast<llama_load_mode>(load_mode);
     b->model = llama_model_load_from_file(model_path, mparams);
     if (!b->model) {
         set_error(b, with_log(b, std::string("无法加载模型: ") + (model_path ? model_path : "")));
