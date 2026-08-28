@@ -44,8 +44,9 @@ struct MessageBubble: View {
                 if let think = message.thinkContent, !think.isEmpty {
                     ThinkSection(think: think, isThinking: message.isThinking)
                 }
-                if !message.visibleContent.isEmpty {
-                    Text(message.visibleContent)
+                let displayText = message.isAgentRound ? AgentService.cleanDisplayText(message.visibleContent) : message.visibleContent
+                if !displayText.isEmpty {
+                    Text(displayText)
                         .textSelection(.enabled)
                 } else if message.isStreaming && message.thinkContent == nil {
                     HStack(spacing: 6) {

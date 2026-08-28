@@ -88,6 +88,33 @@ final class AgentService: ObservableObject {
         return result.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    /// 把 Agent 原始输出清理为可展示给用户的正文：移除结束暗号、工具调用 JSON、markdown 围栏。
+    /// 仅用于 Agent 轮次的气泡渲染；普通聊天内容不会经过此处。
+    static func cleanDisplayText(_ text: String) -> String {
+        let toolNames = BuiltInTools.allTools.map(\.name)
+
+        // 1) 先移除结束暗号（不区分大小写）
+        var result = text.replacingOccurrences(of: Self.endSignal, with: "", options: [.caseInsensitive])
+
+        // 2) 移除 markdown 代码围栏标记
+        result = result.replacingOccurrences(of: "```json", with: "", options: [.caseInsensitive])
+        result = result.replacingOccurrences(of: "```", with: "")
+
+        // 3) 移除工具调用 JSON：找到顶层 {...}，若包含 "name"/"arguments" 且 name 是已知工具名则去掉
+        for candidate in Self.extractJSONObjects(in: result) {
+            let lower = candidate.lowercased()
+            guard lower.contains("\"name\""), lower.contains("\"arguments\"") else { continue }
+            guard let data = candidate.data(using: .utf8),
+                  let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let name = obj["name"] as? String,
+                  toolNames.contains(name)
+            else { continue }
+            result = result.replacingOccurrences(of: candidate, with: "")
+        }
+
+        return result.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     /// 在对话中执行 Agent 循环，返回最终 assistant 消息内容与全部工具调用记录。
     /// 传入 `bridge` 时改为流式：每一轮迭代实时通过桥把思考/正文/工具调用推给 UI；
     /// 不传 `bridge` 则回退为整轮收集后一次性返回（降级兼容 / 测试用）。
@@ -380,7 +407,7 @@ final class AgentService: ObservableObject {
     }
 
     /// 粗略提取顶层平衡的 {...} 子串
-    private static func extractJSONObjects(in text: String) -> [String] {
+    fileprivate static func extractJSONObjects(in text: String) -> [String] {
         var results: [String] = []
         var depth = 0
         var start: String.Index?

@@ -17,6 +17,7 @@ data class ChatMessage(
     var content: String,
     val timestamp: Long = System.currentTimeMillis(),
     var isStreaming: Boolean = false,
+    var isAgentRound: Boolean = false,
     val images: List<ByteArray> = emptyList(),
     var toolCalls: List<ToolCall> = emptyList(),
 )

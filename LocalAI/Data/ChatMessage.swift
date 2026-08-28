@@ -17,6 +17,7 @@ struct ChatMessage: Identifiable, Codable, Sendable {
     var content: String
     var timestamp: Date
     var isStreaming: Bool
+    var isAgentRound: Bool
     var images: [ImageData]
     var toolCalls: [ToolCall]
 
@@ -43,6 +44,7 @@ struct ChatMessage: Identifiable, Codable, Sendable {
         content: String,
         timestamp: Date = Date(),
         isStreaming: Bool = false,
+        isAgentRound: Bool = false,
         images: [ImageData] = [],
         toolCalls: [ToolCall] = []
     ) {
@@ -51,6 +53,7 @@ struct ChatMessage: Identifiable, Codable, Sendable {
         self.content = content
         self.timestamp = timestamp
         self.isStreaming = isStreaming
+        self.isAgentRound = isAgentRound
         self.images = images
         self.toolCalls = toolCalls
     }

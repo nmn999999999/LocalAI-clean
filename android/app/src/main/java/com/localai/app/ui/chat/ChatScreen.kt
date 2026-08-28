@@ -167,7 +167,7 @@ fun ChatScreen(modifier: Modifier = Modifier) {
                             // 气泡直接透传原始 token（含 <think> 标签），MessageBubble 自动解析思考流与正文流。
                             val sink = object : AgentService.AgentSink {
                                 override suspend fun beginIteration(): ChatMessage {
-                                    val m = ChatMessage(role = MessageRole.ASSISTANT, content = "", isStreaming = true)
+                                    val m = ChatMessage(role = MessageRole.ASSISTANT, content = "", isStreaming = true, isAgentRound = true)
                                     withContext(Dispatchers.Main) {
                                         conv.messages.add(m)
                                         ChatStore.upsert(conv)
@@ -331,8 +331,9 @@ private fun MessageBubble(message: ChatMessage) {
                     ThinkSection(think = think, isThinking = ThinkParser.isThinking(message.content))
                 }
                 val visible = ThinkParser.visibleContent(message.content)
-                if (visible.isNotEmpty()) {
-                    Text(text = visible, style = MaterialTheme.typography.bodyMedium)
+                val displayText = if (message.isAgentRound) AgentService.cleanDisplayText(visible) else visible
+                if (displayText.isNotEmpty()) {
+                    Text(text = displayText, style = MaterialTheme.typography.bodyMedium)
                 } else if (message.isStreaming) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)

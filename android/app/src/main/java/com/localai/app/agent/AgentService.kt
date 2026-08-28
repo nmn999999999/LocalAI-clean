@@ -248,6 +248,32 @@ object AgentService {
         _steps.value = emptyList()
     }
 
+    /** 把 Agent 原始输出清理为可展示给用户的正文：移除结束暗号、工具调用 JSON、markdown 围栏。
+     *  仅用于 Agent 轮次的气泡渲染；普通聊天内容不会经过此处。 */
+    fun cleanDisplayText(text: String): String {
+        val toolNames = BuiltInTools.allTools.map { it.name }
+
+        // 1) 先移除结束暗号（不区分大小写）
+        var result = text.replace(Regex(Regex.escape(END_SIGNAL), RegexOption.IGNORE_CASE), "")
+
+        // 2) 移除 markdown 代码围栏标记
+        result = result.replace("```json", "", ignoreCase = true)
+        result = result.replace("```", "")
+
+        // 3) 移除工具调用 JSON：找到顶层 {...}，若包含 "name"/"arguments" 且 name 是已知工具名则去掉
+        for (candidate in extractJsonObjects(result)) {
+            val lower = candidate.lowercase()
+            if (!lower.contains("\"name\"") || !lower.contains("\"arguments\"")) continue
+            val name = runCatching {
+                JSONObject(candidate).optString("name")
+            }.getOrNull() ?: continue
+            if (name.isEmpty() || !toolNames.contains(name)) continue
+            result = result.replace(candidate, "")
+        }
+
+        return result.trim()
+    }
+
     /** 把工作历史裁剪到最多 [MAX_WORKING_MESSAGES] 条：保留第一条 system 消息（工具说明所在），
      *  丢弃最旧的对话消息，保留最近的上下文。返回新列表，不修改入参。 */
     private fun trimmedHistory(history: List<ChatMessage>): List<ChatMessage> {

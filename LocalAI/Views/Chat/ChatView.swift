@@ -305,7 +305,7 @@ struct ChatView: View {
                 // 气泡直接透传原始 token（含 <think> 标签），MessageBubble 自动解析思考流与正文流。
                 let bridge = AgentService.AgentDisplayBridge(
                     beginIteration: {
-                        let m = ChatMessage(role: .assistant, content: "", isStreaming: true)
+                        let m = ChatMessage(role: .assistant, content: "", isStreaming: true, isAgentRound: true)
                         var c = chatStore.currentOrNew
                         c.messages.append(m)
                         chatStore.upsert(c)
