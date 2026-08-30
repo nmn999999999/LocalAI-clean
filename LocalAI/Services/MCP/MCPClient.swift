@@ -197,13 +197,17 @@ enum MCPClient {
         }
 
         // 可能是 SSE 流（streamable HTTP），取第一条 data 行
+        // v0.3.40 修复：不能用 split(separator: Character) 切 "\n" —— Swift 的 Unicode 字形簇
+        // 把 CRLF 当成一个整体字符，split 切不开 SSE 标准行尾（DeepWiki 等返回 CRLF，
+        // 导致整段响应被当一行、data: 解析不到、工具列表全空）。
+        // 改用 components(separatedBy:)（子串级切分）+ whitespacesAndNewlines（顺带去掉 \r）。
         var jsonObject: Any?
         let raw = String(data: data, encoding: .utf8) ?? ""
         if raw.contains("data:") {
-            for line in raw.split(separator: "\n") {
-                let trimmed = line.trimmingCharacters(in: .whitespaces)
+            for line in raw.components(separatedBy: "\n") {
+                let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
                 if trimmed.hasPrefix("data:"),
-                   let d = trimmed.dropFirst(5).trimmingCharacters(in: .whitespaces).data(using: .utf8),
+                   let d = trimmed.dropFirst(5).trimmingCharacters(in: .whitespacesAndNewlines).data(using: .utf8),
                    let obj = try? JSONSerialization.jsonObject(with: d) {
                     jsonObject = obj
                     break

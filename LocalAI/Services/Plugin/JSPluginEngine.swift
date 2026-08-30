@@ -28,11 +28,13 @@ final class JSPluginEngine: @unchecked Sendable {
     private var runQueue: DispatchQueue
     private var context: JSContext?
     private let preamble: String
+    private let jsSource: String
 
     private static let callTimeout: TimeInterval = 30
 
     init?(manifest: PluginManifest, jsSource: String, storageFile: URL? = nil) {
         self.manifest = manifest
+        self.jsSource = jsSource
         self.storageFile = storageFile
         let queue = DispatchQueue(label: "localai.plugin.\(manifest.id)")
         self.runQueue = queue
@@ -52,6 +54,10 @@ final class JSPluginEngine: @unchecked Sendable {
         function __pluginTools() { return JSON.stringify(__tools.map(function(t){
           return { name: t.name, description: t.description, parameters: t.parameters };
         })); }
+        function __sanitize(v) {
+          // JSON 归一化：NaN/Infinity→null；undefined→null（JSON.parse(undefined) 会抛异常，v0.3.40 修复）
+          try { return JSON.parse(JSON.stringify(v)); } catch (e) { return v === undefined ? null : v; }
+        }
         function __callToolAsync(name, argsJSON, done) {
           var t = null;
           for (var i = 0; i < __tools.length; i++) { if (__tools[i].name === name) { t = __tools[i]; break; } }
@@ -60,10 +66,9 @@ final class JSPluginEngine: @unchecked Sendable {
             var args = argsJSON ? JSON.parse(argsJSON) : {};
             var r = t.run(args);
             if (r && typeof r.then === 'function') {
-              r.then(function(v){ done({ result: JSON.parse(JSON.stringify(v)) }); }, function(e){ done({ error: String(e) }); });
+              r.then(function(v){ done({ result: __sanitize(v) }); }, function(e){ done({ error: String(e) }); });
             } else {
-              // JSON 归一化：NaN/Infinity→null、undefined 省略，防止桥接层因非法 JSON 值崩溃
-              done({ result: JSON.parse(JSON.stringify(r)) });
+              done({ result: __sanitize(r) });
             }
           } catch (e) {
             done({ error: String(e) });
@@ -232,6 +237,8 @@ final class JSPluginEngine: @unchecked Sendable {
                 ctx.setObject(fn, forKeyedSubscript: "nativeStoreSet" as NSString)
             }
             ctx.evaluateScript(self.preamble)
+            // 超时重置必须重新加载模块工具脚本，否则后续调用全部 unknown tool（v0.3.40 修复）
+            ctx.evaluateScript(self.jsSource)
             self.context = ctx
         }
         lock.lock()

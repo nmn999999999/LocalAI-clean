@@ -27,11 +27,8 @@ final class MCPService: ObservableObject {
             url: "https://mcp.deepwiki.com/mcp",
             note: "查询任意 GitHub 仓库的官方文档（免费免密钥）"
         ),
-        MCPPreset(
-            name: "ContextX · Grok 搜索",
-            url: "https://mcp.twitter.monster/mcp",
-            note: "联网搜索（Grok 引擎，免费免密钥）"
-        ),
+        // ⚠️ ContextX·Grok 搜索曾因公共端点不稳定（2026-08-31 起 /mcp 返回 404）被移除。
+        // 如需联网搜索，直接用内置 web_search 工具或 Bing/维基（无需任何 MCP）。
     ]
 
     private let saveURL: URL
