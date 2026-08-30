@@ -367,8 +367,10 @@ struct ChatView: View {
                             .accessibilityLabel(t("Agent 模式"))
                     }
                     .buttonStyle(.plain)
-                    .disabled(!llmService.isModelReady)
-                    .opacity(llmService.isModelReady ? 1 : 0.35)
+                    // Agent 模式在本地模型或云端 Provider 下都可用 → 用 canChat 而非 isModelReady，
+                    // 否则云端用户/本地未装载时按钮永久灰色，只能重启恢复（v0.3.34 修复）。
+                    .disabled(!canChat)
+                    .opacity(canChat ? 1 : 0.35)
 
                     if providerStore.hasCloudSelection {
                         Button {
