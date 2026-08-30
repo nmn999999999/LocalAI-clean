@@ -1,0 +1,9 @@
+{
+  "id": "weather",
+  "name": "天气查询",
+  "version": "1.0.0",
+  "description": "查询任意城市实时天气（wttr.in，需要联网）",
+  "author": "LocalAI",
+  "minAppVersion": "0.3.37",
+  "permissions": ["network"]
+}

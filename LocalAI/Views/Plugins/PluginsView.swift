@@ -59,29 +59,34 @@ struct PluginsView: View {
                     .foregroundStyle(.secondary)
             }
             ForEach(pluginManager.modules) { module in
-                HStack(alignment: .top, spacing: 10) {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(module.manifest.name)
-                            .font(.subheadline.weight(.semibold))
-                        Text(module.manifest.description)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(2)
-                        Text("v\\(module.manifest.version) · \\(module.toolCount) 个工具")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
+                NavigationLink {
+                    ModuleDetailView(module: module)
+                } label: {
+                    HStack(alignment: .top, spacing: 10) {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(module.manifest.name)
+                                .font(.subheadline.weight(.semibold))
+                            Text(module.manifest.description)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
+                            Text("v\(module.manifest.version) · \(module.toolCount) 个工具"
+                                 + (module.engine.requiresApproval() ? " · 需授权" : ""))
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button(role: .destructive) {
+                            pluginManager.remove(module)
+                            toast("已删除模块")
+                        } label: {
+                            Image(systemName: "trash")
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
                     }
-                    Spacer()
-                    Button(role: .destructive) {
-                        pluginManager.remove(module)
-                        toast("已删除模块")
-                    } label: {
-                        Image(systemName: "trash")
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
+                    .padding(.vertical, 2)
                 }
-                .padding(.vertical, 2)
             }
         } header: {
             Text("已安装")

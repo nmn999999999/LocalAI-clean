@@ -1,0 +1,8 @@
+{
+  "id": "datetime",
+  "name": "时间日期工具",
+  "version": "1.0.0",
+  "description": "时间戳转换 / 日期格式化 / 日期差计算（纯计算，无权限）",
+  "author": "LocalAI",
+  "minAppVersion": "0.3.37"
+}

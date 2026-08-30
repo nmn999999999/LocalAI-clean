@@ -4,12 +4,37 @@
       "id": "string-tools",
       "name": "字符串工具包",
       "version": "1.0.0",
-      "description": "字符串处理工具集：反转 / ROT13 / 词频统计 / 回文检测（示例 JS 插件）",
+      "description": "字符串处理工具集：反转 / ROT13 / 词频统计 / 回文检测（纯计算）",
       "author": "LocalAI",
       "minAppVersion": "0.3.36",
       "files": {
         "manifest": "https://raw.githubusercontent.com/nmn999999999/LocalAI-clean/main/modules/string-tools/manifest.json",
         "tools": "https://raw.githubusercontent.com/nmn999999999/LocalAI-clean/main/modules/string-tools/tools.js"
+      }
+    },
+    {
+      "id": "weather",
+      "name": "天气查询",
+      "version": "1.0.0",
+      "description": "查询任意城市实时天气（wttr.in，联网权限）",
+      "author": "LocalAI",
+      "minAppVersion": "0.3.37",
+      "permissions": ["network"],
+      "files": {
+        "manifest": "https://raw.githubusercontent.com/nmn999999999/LocalAI-clean/main/modules/weather/manifest.json",
+        "tools": "https://raw.githubusercontent.com/nmn999999999/LocalAI-clean/main/modules/weather/tools.js"
+      }
+    },
+    {
+      "id": "datetime",
+      "name": "时间日期工具",
+      "version": "1.0.0",
+      "description": "时间戳转换 / 日期格式化 / 日期差计算（纯计算）",
+      "author": "LocalAI",
+      "minAppVersion": "0.3.37",
+      "files": {
+        "manifest": "https://raw.githubusercontent.com/nmn999999999/LocalAI-clean/main/modules/datetime/manifest.json",
+        "tools": "https://raw.githubusercontent.com/nmn999999999/LocalAI-clean/main/modules/datetime/tools.js"
       }
     }
   ]

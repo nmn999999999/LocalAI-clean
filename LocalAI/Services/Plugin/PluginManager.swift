@@ -57,7 +57,8 @@ final class PluginManager: ObservableObject {
               let manifest = try? JSONDecoder().decode(PluginManifest.self, from: manifestData),
               let jsSource = try? String(contentsOf: jsURL, encoding: .utf8)
         else { return nil }
-        guard let engine = JSPluginEngine(manifest: manifest, jsSource: jsSource) else { return nil }
+        let storageFile = dir.appendingPathComponent("storage.json")
+        guard let engine = JSPluginEngine(manifest: manifest, jsSource: jsSource, storageFile: storageFile) else { return nil }
         return InstalledModule(manifest: manifest, directory: dir, engine: engine)
     }
 
@@ -97,7 +98,7 @@ final class PluginManager: ObservableObject {
     func callTool(name: String, argumentsJSON: String) async -> String {
         for module in modules {
             if let def = module.engine.tools.first(where: { $0.name == name }) {
-                return module.engine.call(name: def.name, argumentsJSON: argumentsJSON)
+                return await module.engine.call(name: def.name, argumentsJSON: argumentsJSON)
             }
         }
         return "未知工具: \\(name)"
@@ -141,6 +142,13 @@ final class PluginManager: ObservableObject {
             let (manifestData, mResp) = try await URLSession.shared.data(from: manifestURL)
             guard (mResp as? HTTPURLResponse)?.statusCode == 200 else { return "清单下载失败" }
             let manifest = try JSONDecoder().decode(PluginManifest.self, from: manifestData)
+
+            // 版本兼容检查：App 版本低于模块要求 → 拒绝安装
+            let appVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0"
+            if let required = manifest.minAppVersion, !required.isEmpty,
+               UpdateCheckerService.compare(UpdateCheckerService.stripV(required), appVersion) > 0 {
+                return "需要升级 App 到 v\(required) 才能安装此模块"
+            }
             let (jsData, tResp) = try await URLSession.shared.data(from: toolsURL)
             guard (tResp as? HTTPURLResponse)?.statusCode == 200,
                   let jsSource = String(data: jsData, encoding: .utf8)

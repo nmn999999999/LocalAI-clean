@@ -11,6 +11,8 @@ struct PluginManifest: Codable, Sendable {
     var author: String?
     /// 最低 App 版本（如 "0.3.36"）；低于则提示升级 App
     var minAppVersion: String?
+    /// 声明的权限：["network"]（联网，需授权）/ ["storage"]（模块本地存储）
+    var permissions: [String]
 
     init(
         id: String,
@@ -18,7 +20,8 @@ struct PluginManifest: Codable, Sendable {
         version: String,
         description: String,
         author: String? = nil,
-        minAppVersion: String? = nil
+        minAppVersion: String? = nil,
+        permissions: [String] = []
     ) {
         self.id = id
         self.name = name
@@ -26,6 +29,22 @@ struct PluginManifest: Codable, Sendable {
         self.description = description
         self.author = author
         self.minAppVersion = minAppVersion
+        self.permissions = permissions
+    }
+
+    // 旧存档/旧清单没有 permissions → 默认 []
+    enum CodingKeys: String, CodingKey {
+        case id, name, version, description, author, minAppVersion, permissions
+    }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        version = try c.decode(String.self, forKey: .version)
+        description = try c.decode(String.self, forKey: .description)
+        author = try c.decodeIfPresent(String.self, forKey: .author)
+        minAppVersion = try c.decodeIfPresent(String.self, forKey: .minAppVersion)
+        permissions = try c.decodeIfPresent([String].self, forKey: .permissions) ?? []
     }
 }
 
@@ -60,6 +79,7 @@ struct ModuleIndexEntry: Codable, Sendable, Identifiable {
     var description: String
     var author: String?
     var minAppVersion: String?
+    var permissions: [String]?
     /// 各文件的下载地址
     var files: ModuleFiles
 
