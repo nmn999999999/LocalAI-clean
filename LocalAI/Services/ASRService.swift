@@ -31,6 +31,16 @@ final class ASRService: ObservableObject {
     private var audioEngine: AVAudioEngine?
     private var request: SFSpeechAudioBufferRecognitionRequest?
     private var task: SFSpeechRecognitionTask?
+    /// 音频实时线程与主线程共享的请求引用（见 SpeechRequestBox 注释）
+    private var requestBox: SpeechRequestBox?
+
+    /// 音频 tap 线程（非主线程）需要 append buffer 到 Speech 请求。
+    /// SFSpeechAudioBufferRecognitionRequest 本身无 actor 隔离（SDK 无 @MainActor），
+    /// 但它的 append 设计上就是给音频实时线程调用（Apple 官方样例同款）。
+    /// 用 @unchecked Sendable 盒子跨线程持有引用；闭包只捕获这个盒子，不触碰 @MainActor 状态。
+    private final class SpeechRequestBox: @unchecked Sendable {
+        var request: SFSpeechAudioBufferRecognitionRequest?
+    }
 
     private init() {
         updateLocale()
@@ -75,29 +85,44 @@ final class ASRService: ObservableObject {
         self.audioEngine = engine
         self.request = request
 
-        task = recognizer.recognitionTask(with: request) { [weak self] result, error in
+        let requestBox = SpeechRequestBox()
+        requestBox.request = request
+        self.requestBox = requestBox
+
+        // 结果回调：显式 @Sendable，避免继承 @MainActor 隔离（v0.3.32 崩溃修复：
+        // 非 @Sendable 闭包在 @MainActor 上下文创建会继承隔离，Speech 在后台队列回调时
+        // _swift_task_checkIsolatedSwift 断言 → SIGTRAP）。状态写回统一 Task { @MainActor }。
+        let resultHandler: @Sendable (SFSpeechRecognitionResult?, Error?) -> Void = { [weak self] result, error in
+            // 先在外层把非 Sendable 的 result 降级为 Sendable 数据（String/Bool），
+            // 再把它们送进 Task —— 直接把 result 对象送进 @Sendable Task 会报 data race。
+            let text = result?.bestTranscription.formattedString
+            let isFinal = result?.isFinal ?? false
+            let hasError = error != nil
             Task { @MainActor in
                 guard let self else { return }
-                if let result {
-                    let text = result.bestTranscription.formattedString
+                if let text {
                     self.partialText = text
                     self.onPartial?(text)
-                    if result.isFinal {
+                    if isFinal {
                         if !text.isEmpty { self.onFinal?(text) }
                         self.stop()
                     }
                 }
-                if error != nil {
+                if hasError {
                     self.stop()
                 }
             }
         }
+        task = recognizer.recognitionTask(with: request, resultHandler: resultHandler)
 
         let format = engine.inputNode.outputFormat(forBus: 0)
         engine.inputNode.removeTap(onBus: 0)
-        engine.inputNode.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in
-            request.append(buffer)
+        // 音频 tap：@Sendable 闭包在音频实时线程执行（RealtimeMessenger 队列），
+        // 只捕获线程安全的 box，不触碰任何 @MainActor 状态。
+        let tapBlock: @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void = { buffer, _ in
+            requestBox.request?.append(buffer)
         }
+        engine.inputNode.installTap(onBus: 0, bufferSize: 1024, format: format, block: tapBlock)
 
         engine.prepare()
         do {
@@ -115,6 +140,8 @@ final class ASRService: ObservableObject {
         audioEngine?.inputNode.removeTap(onBus: 0)
         audioEngine = nil
         request = nil
+        requestBox?.request = nil
+        requestBox = nil
         isListening = false
         partialText = ""
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
