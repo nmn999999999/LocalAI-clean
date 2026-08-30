@@ -1,0 +1,8 @@
+{
+  "id": "random-tools",
+  "name": "随机工具",
+  "version": "1.0.0",
+  "description": "强密码 / 掷骰子 / 抽签 / 随机数（纯计算）",
+  "author": "LocalAI",
+  "minAppVersion": "0.3.38"
+}

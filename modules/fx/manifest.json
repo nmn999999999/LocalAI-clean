@@ -1,0 +1,9 @@
+{
+  "id": "fx",
+  "name": "货币汇率",
+  "version": "1.0.0",
+  "description": "实时汇率换算（基于 USD，开放汇率 API 免费额度，需联网）",
+  "author": "LocalAI",
+  "minAppVersion": "0.3.38",
+  "permissions": ["network"]
+}

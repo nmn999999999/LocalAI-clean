@@ -1,0 +1,8 @@
+{
+  "id": "json-tools",
+  "name": "JSON 工具",
+  "version": "1.0.0",
+  "description": "JSON 格式化 / 压缩 / 取值 / 转 CSV（纯计算）",
+  "author": "LocalAI",
+  "minAppVersion": "0.3.38"
+}

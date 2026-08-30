@@ -6,6 +6,8 @@ struct PluginsView: View {
     @ObservedObject private var pluginManager = PluginManager.shared
     @State private var installingID: String?
     @State private var toast: String?
+    @State private var showImporter = false
+    @State private var importError: String?
 
     var body: some View {
         List {
@@ -15,7 +17,12 @@ struct PluginsView: View {
         .navigationTitle("模块 / JS 插件")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                Button {
+                    showImporter = true
+                } label: {
+                    Label("导入", systemImage: "square.and.arrow.down")
+                }
                 Button {
                     Task { await pluginManager.checkForUpdates() }
                 } label: {
@@ -27,6 +34,28 @@ struct PluginsView: View {
                 }
                 .disabled(pluginManager.isChecking)
             }
+        }
+        .fileImporter(
+            isPresented: $showImporter,
+            allowedContentTypes: [.data],
+            allowsMultipleSelection: false
+        ) { result in
+            guard case .success(let urls) = result, let url = urls.first else { return }
+            do {
+                let data = try Data(contentsOf: url)
+                let warning = try pluginManager.importBundle(data: data)
+                toast(warning ?? "导入成功")
+            } catch {
+                importError = error.localizedDescription
+            }
+        }
+        .alert("导入失败", isPresented: .init(
+            get: { importError != nil },
+            set: { if !$0 { importError = nil } }
+        )) {
+            Button("好的", role: .cancel) {}
+        } message: {
+            Text(importError ?? "")
         }
         .task { await pluginManager.checkForUpdates() }
         .overlay(alignment: .bottom) {
@@ -152,9 +181,9 @@ struct PluginsView: View {
 
     private func installedText(_ update: ModuleUpdate) -> String {
         if let v = update.installedVersion {
-            return update.hasUpdate ? "已安装 v\\(v) → 可更新 v\\(update.entry.version)" : "已安装 v\\(v)（最新）"
+            return update.hasUpdate ? "已安装 v\(v) → 可更新 v\(update.entry.version)" : "已安装 v\(v)（最新）"
         }
-        return "v\\(update.entry.version) · 未安装"
+        return "v\(update.entry.version) · 未安装"
     }
 
     private func installOrUpdate(_ update: ModuleUpdate) {
@@ -162,7 +191,7 @@ struct PluginsView: View {
         Task {
             defer { installingID = nil }
             let error = await pluginManager.installOrUpdate(update.entry)
-            toast = error ?? (update.installedVersion == nil ? "安装成功" : "已更新到 v\\(update.entry.version)")
+            toast = error ?? (update.installedVersion == nil ? "安装成功" : "已更新到 v\(update.entry.version)")
         }
     }
 

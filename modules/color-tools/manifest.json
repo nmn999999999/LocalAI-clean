@@ -1,0 +1,8 @@
+{
+  "id": "color-tools",
+  "name": "颜色工具",
+  "version": "1.0.0",
+  "description": "HEX/RGB/HSL 颜色互转与调色（纯计算）",
+  "author": "LocalAI",
+  "minAppVersion": "0.3.38"
+}

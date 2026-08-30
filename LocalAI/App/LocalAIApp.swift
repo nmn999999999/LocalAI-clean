@@ -29,6 +29,8 @@ struct LocalAIApp: App {
                     if SettingsStorage.shared.settings.autoCheckUpdate {
                         await UpdateCheckerService.shared.checkIfNeeded()
                     }
+                    // 插件：启动静默检查模块更新（1 天节流，服务页显示可更新角标）
+                    await PluginManager.shared.checkForUpdatesIfNeeded()
                 }
                 // 数据安全：切后台/退出时立即落盘对话，防止 500ms 防抖窗口内强杀 App 丢消息
                 .onChange(of: scenePhase) { _, phase in

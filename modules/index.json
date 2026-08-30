@@ -4,7 +4,7 @@
       "id": "string-tools",
       "name": "字符串工具包",
       "version": "1.0.0",
-      "description": "字符串处理工具集：反转 / ROT13 / 词频统计 / 回文检测（纯计算）",
+      "description": "字符串处理：反转 / ROT13 / 词频 / 回文（纯计算）",
       "author": "LocalAI",
       "minAppVersion": "0.3.36",
       "files": {
@@ -16,10 +16,12 @@
       "id": "weather",
       "name": "天气查询",
       "version": "1.0.0",
-      "description": "查询任意城市实时天气（wttr.in，联网权限）",
+      "description": "任意城市实时天气（wttr.in，联网权限）",
       "author": "LocalAI",
       "minAppVersion": "0.3.37",
-      "permissions": ["network"],
+      "permissions": [
+        "network"
+      ],
       "files": {
         "manifest": "https://raw.githubusercontent.com/nmn999999999/LocalAI-clean/main/modules/weather/manifest.json",
         "tools": "https://raw.githubusercontent.com/nmn999999999/LocalAI-clean/main/modules/weather/tools.js"
@@ -29,12 +31,63 @@
       "id": "datetime",
       "name": "时间日期工具",
       "version": "1.0.0",
-      "description": "时间戳转换 / 日期格式化 / 日期差计算（纯计算）",
+      "description": "时间戳 / 日期格式化 / 日期差（纯计算）",
       "author": "LocalAI",
       "minAppVersion": "0.3.37",
       "files": {
         "manifest": "https://raw.githubusercontent.com/nmn999999999/LocalAI-clean/main/modules/datetime/manifest.json",
         "tools": "https://raw.githubusercontent.com/nmn999999999/LocalAI-clean/main/modules/datetime/tools.js"
+      }
+    },
+    {
+      "id": "fx",
+      "name": "货币汇率",
+      "version": "1.0.0",
+      "description": "实时汇率换算（USD 基准，免费 API，联网权限）",
+      "author": "LocalAI",
+      "minAppVersion": "0.3.38",
+      "permissions": [
+        "network"
+      ],
+      "files": {
+        "manifest": "https://raw.githubusercontent.com/nmn999999999/LocalAI-clean/main/modules/fx/manifest.json",
+        "tools": "https://raw.githubusercontent.com/nmn999999999/LocalAI-clean/main/modules/fx/tools.js"
+      }
+    },
+    {
+      "id": "json-tools",
+      "name": "JSON 工具",
+      "version": "1.0.0",
+      "description": "JSON 格式化 / 压缩 / 点路径取值（纯计算）",
+      "author": "LocalAI",
+      "minAppVersion": "0.3.38",
+      "files": {
+        "manifest": "https://raw.githubusercontent.com/nmn999999999/LocalAI-clean/main/modules/json-tools/manifest.json",
+        "tools": "https://raw.githubusercontent.com/nmn999999999/LocalAI-clean/main/modules/json-tools/tools.js"
+      }
+    },
+    {
+      "id": "color-tools",
+      "name": "颜色工具",
+      "version": "1.0.0",
+      "description": "HEX/RGB/HSL 互转与调色（纯计算）",
+      "author": "LocalAI",
+      "minAppVersion": "0.3.38",
+      "files": {
+        "manifest": "https://raw.githubusercontent.com/nmn999999999/LocalAI-clean/main/modules/color-tools/manifest.json",
+        "tools": "https://raw.githubusercontent.com/nmn999999999/LocalAI-clean/main/modules/color-tools/tools.js"
+      }
+    },
+    {
+      "id": "random-tools",
+      "name": "随机工具",
+      "version": "1.0.0",
+      "description": "强密码 / 掷骰子 / 抽签（纯计算）",
+      "author": "LocalAI",
+      "minAppVersion": "0.3.38",
+      "files": {
+        "manifest": "https://raw.githubusercontent.com/nmn999999999/LocalAI-clean/main/modules/random-tools/manifest.json",
+        "tools": "https://raw.githubusercontent.com/nmn999999999/LocalAI-clean/main/modules/random-tools/tools.js"
       }
     }
   ]

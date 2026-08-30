@@ -299,6 +299,14 @@ struct ProvidersView: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
+                    if PluginManager.shared.updatableCount > 0 {
+                        Text("\(PluginManager.shared.updatableCount) 可更新")
+                            .font(.caption2.weight(.semibold))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(Color.orange.opacity(0.15), in: Capsule())
+                            .foregroundStyle(.orange)
+                    }
                 }
             }
         } header: {

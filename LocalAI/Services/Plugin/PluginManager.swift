@@ -22,6 +22,19 @@ final class PluginManager: ObservableObject {
     @Published private(set) var remoteIndex: [ModuleIndexEntry] = []
     @Published private(set) var isChecking = false
     @Published var lastCheckError: String?
+    /// 可更新模块数量（服务页角标）
+    var updatableCount: Int {
+        updateStates().filter(\.hasUpdate).count
+    }
+
+    /// 启动静默检查（1 天节流）
+    private let lastCheckKey = "plugin_check_ts"
+    func checkForUpdatesIfNeeded() async {
+        let last = UserDefaults.standard.double(forKey: lastCheckKey)
+        guard Date().timeIntervalSince1970 - last >= 86400 else { return }
+        await checkForUpdates()
+        UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: lastCheckKey)
+    }
 
     private let modulesDir: URL
     /// 模块索引地址（GitHub raw；可换成自己的静态站点）
@@ -101,7 +114,7 @@ final class PluginManager: ObservableObject {
                 return await module.engine.call(name: def.name, argumentsJSON: argumentsJSON)
             }
         }
-        return "未知工具: \\(name)"
+        return "未知工具: \(name)"
     }
 
     // MARK: - 远程更新（应用内更新模块）
@@ -122,14 +135,14 @@ final class PluginManager: ObservableObject {
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
             guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
-                lastCheckError = "模块索引响应异常 (HTTP \\((response as? HTTPURLResponse)?.statusCode ?? -1))"
+                lastCheckError = "模块索引响应异常 (HTTP \((response as? HTTPURLResponse)?.statusCode ?? -1))"
                 return
             }
             let index = try JSONDecoder().decode(ModuleIndex.self, from: data)
             remoteIndex = index.modules
             lastCheckError = nil
         } catch {
-            lastCheckError = "检查失败: \\(error.localizedDescription.prefix(60))"
+            lastCheckError = "检查失败: \(error.localizedDescription.prefix(60))"
         }
     }
 
@@ -154,10 +167,76 @@ final class PluginManager: ObservableObject {
                   let jsSource = String(data: jsData, encoding: .utf8)
             else { return "脚本下载失败" }
             try install(entry: entry, manifest: manifest, jsSource: jsSource)
-            return nil
+            return conflictWarning(for: manifest.id)
         } catch {
-            return "安装失败: \\(error.localizedDescription.prefix(60))"
+            return "安装失败: \(error.localizedDescription.prefix(60))"
         }
+    }
+
+    /// 从本地 .localaimod 导入并安装（返回警告信息；nil = 成功无警告）
+    func importBundle(data: Data) throws -> String? {
+        let (manifest, tools) = try parseImport(data: data)
+        let entry = ModuleIndexEntry(
+            id: manifest.id,
+            name: manifest.name,
+            version: manifest.version,
+            description: manifest.description,
+            author: manifest.author,
+            minAppVersion: manifest.minAppVersion,
+            permissions: manifest.permissions,
+            files: .init(manifest: "", tools: "")
+        )
+        try install(entry: entry, manifest: manifest, jsSource: tools)
+        return conflictWarning(for: manifest.id)
+    }
+
+    /// 工具名冲突检查：插件工具与内置/MCP 同名 → 内置优先（插件同名的不会被调用）
+    private func conflictWarning(for moduleID: String) -> String? {
+        guard let module = modules.first(where: { $0.id == moduleID }) else { return nil }
+        let builtinNames = Set(BuiltInTools.allTools.map(\.name))
+        let mcpNames = Set(MCPService.shared.toolDefinitions.map(\.name))
+        let conflicts = module.engine.tools
+            .map(\.name)
+            .filter { builtinNames.contains($0) || mcpNames.contains($0) }
+        guard !conflicts.isEmpty else { return nil }
+        return "⚠️ 工具名与已有工具冲突（内置优先）: \(conflicts.joined(separator: ", "))"
+    }
+
+    // MARK: - 本地导入 / 导出（.localaimod = LZ4 压缩的 {"manifest":..., "tools":"..."}）
+
+    /// 导出已安装模块为 .localaimod 文件（可分享给他人导入）
+    func exportModule(_ module: InstalledModule) -> URL? {
+        let dir = module.directory
+        guard let manifestData = try? Data(contentsOf: dir.appendingPathComponent("manifest.json")),
+              let manifest = try? JSONDecoder().decode(PluginManifest.self, from: manifestData),
+              let jsSource = try? String(contentsOf: dir.appendingPathComponent("tools.js"), encoding: .utf8)
+        else { return nil }
+        let bundle: [String: Any] = ["manifest": manifest, "tools": jsSource]
+        guard let json = try? JSONSerialization.data(withJSONObject: bundle, options: [.prettyPrinted]) else { return nil }
+        let compressed = LZ4.compress(json)
+        let file = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(module.manifest.id)-\(module.manifest.version).localaimod")
+        try? compressed.write(to: file)
+        return file
+    }
+
+    /// 解析 .localaimod 数据 → (manifest, tools)
+    /// 格式：LZ4 压缩的 {"manifest": {...}, "tools": "..."}；兼容未压缩的明文 JSON。
+    func parseImport(data: Data) throws -> (PluginManifest, String) {
+        let decompressed: Data
+        if let d = LZ4.decompress(data) {
+            decompressed = d
+        } else {
+            decompressed = data   // 明文 JSON 兼容
+        }
+        guard let json = (try? JSONSerialization.jsonObject(with: decompressed)) as? [String: Any],
+              let manifestData = try? JSONSerialization.data(withJSONObject: json["manifest"] as Any),
+              let manifest = try? JSONDecoder().decode(PluginManifest.self, from: manifestData),
+              let tools = json["tools"] as? String
+        else {
+            throw NSError(domain: "Plugin", code: 1, userInfo: [NSLocalizedDescriptionKey: "无效的 .localaimod 文件"])
+        }
+        return (manifest, tools)
     }
 
     // MARK: - 状态查询
