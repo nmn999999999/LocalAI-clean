@@ -627,18 +627,32 @@ struct SettingsView: View {
 
                 HStack {
                     VStack(alignment: .leading, spacing: 3) {
-                        Text("当前版本 \(updater.currentVersion)")
-                            .font(.subheadline)
+                        HStack(spacing: 6) {
+                            Text("当前版本 \(updater.currentVersion)")
+                                .font(.subheadline)
+                            if updater.isGray {
+                                Text("灰度通道")
+                                    .font(.caption2.weight(.semibold))
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(Color.orange.opacity(0.15), in: Capsule())
+                                    .foregroundStyle(.orange)
+                            }
+                        }
                         if updater.hasUpdate {
-                            Text("发现新版本 \(updater.latestTag ?? "")")
+                            Text("发现新版本 \(updater.latestTag ?? "")" + (updater.isGray ? "（灰度）" : ""))
                                 .font(.subheadline.weight(.semibold))
-                                .foregroundStyle(.green)
+                                .foregroundStyle(updater.isGray ? .orange : .green)
                         } else if updater.lastChecked {
                             if let err = updater.lastError {
                                 // 检查失败与「已是最新」分开显示，避免误导
                                 Text("检查失败：\(err)")
                                     .font(.caption)
                                     .foregroundStyle(.orange)
+                            } else if let pct = updater.grayPercent {
+                                Text("已是最新版本 · 灰度中（\(pct)% 设备可见新版本）")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
                             } else {
                                 Text("已是最新版本")
                                     .font(.caption)
@@ -671,6 +685,21 @@ struct SettingsView: View {
                     }
                 }
                 .tint(.blue)
+
+                // 微信式灰度测试：开启后始终能看到并下载灰度版本
+                Toggle(isOn: $storage.settings.grayOptIn) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("参与灰度测试")
+                            .font(.subheadline)
+                        Text("抢先体验新版本；灰度版未上 GitHub Release，仅通过灰度通道下发")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .tint(.orange)
+                .onChange(of: storage.settings.grayOptIn) { _, _ in
+                    Task { await updater.check() }
+                }
 
                 if updater.hasUpdate {
                     Divider()

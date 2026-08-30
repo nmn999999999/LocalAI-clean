@@ -241,10 +241,22 @@ final class PluginManager: ObservableObject {
 
     // MARK: - 状态查询
 
-    /// 可安装/可更新列表（按远程索引）
+    /// 可安装/可更新列表（按远程索引；灰度模块只对命中灰度的设备显示）
     func updateStates() -> [ModuleUpdate] {
-        remoteIndex.map { entry in
-            ModuleUpdate(entry: entry, installedVersion: modules.first { $0.id == entry.id }?.manifest.version)
-        }
+        let optIn = UserDefaults.standard.bool(forKey: UpdateCheckerService.grayOptInKey)
+        return remoteIndex
+            .filter { entry in
+                // 灰度模块：非灰度设备隐藏（已安装的保留，不自动卸载）
+                guard let gray = entry.gray else { return true }
+                return UpdatePolicy.inGray(percent: gray.percent, optIn: optIn)
+            }
+            .map { entry in
+                ModuleUpdate(entry: entry, installedVersion: modules.first { $0.id == entry.id }?.manifest.version)
+            }
+    }
+
+    /// 模块是否处于灰度中（UI 徽标）
+    func isGrayModule(_ entry: ModuleIndexEntry) -> Bool {
+        entry.gray != nil
     }
 }

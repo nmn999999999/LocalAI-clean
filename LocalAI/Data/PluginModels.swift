@@ -80,6 +80,8 @@ struct ModuleIndexEntry: Codable, Sendable, Identifiable {
     var author: String?
     var minAppVersion: String?
     var permissions: [String]?
+    /// 模块灰度策略（可选）：命中灰度的设备才在市场看到该模块
+    var gray: ModuleGrayPolicy?
     /// 各文件的下载地址
     var files: ModuleFiles
 

@@ -260,6 +260,8 @@ struct ModelSettings: Codable, Sendable {
     var kvCacheQuantize: Bool
     /// 启动时自动检查新版本（滚动更新引导）
     var autoCheckUpdate: Bool
+    /// 强制参与灰度测试（微信式内测开关；开启后始终走灰度版本）
+    var grayOptIn: Bool
     /// 对话结束后自动提炼长期记忆（世界观/记忆的自动抽取 pipeline）
     var autoExtractMemory: Bool
     // S3 备份配置
@@ -318,6 +320,7 @@ struct ModelSettings: Codable, Sendable {
         useMetalAuto: Bool = true,
         kvCacheQuantize: Bool = false,
         autoCheckUpdate: Bool = true,
+        grayOptIn: Bool = false,
         autoExtractMemory: Bool = false,
         s3Endpoint: String = "",
         s3Bucket: String = "",
@@ -364,6 +367,7 @@ struct ModelSettings: Codable, Sendable {
         self.useMetalAuto = useMetalAuto
         self.kvCacheQuantize = kvCacheQuantize
         self.autoCheckUpdate = autoCheckUpdate
+        self.grayOptIn = grayOptIn
         self.autoExtractMemory = autoExtractMemory
         self.s3Endpoint = s3Endpoint
         self.s3Bucket = s3Bucket
@@ -388,7 +392,7 @@ struct ModelSettings: Codable, Sendable {
              apiEnabled, apiEndpoint, apiKey, apiModel, apiTemperature, apiMaxTokens,
              cloudWebSearch, ttsEngine, ttsVoice, ttsVoiceName, ttsModel, language,
              keepScreenOn, memoryEnabled, worldBookEnabled, instructionEnabled,
-             promptStrategy, useMetalAuto, kvCacheQuantize, autoCheckUpdate, autoExtractMemory,
+             promptStrategy, useMetalAuto, kvCacheQuantize, autoCheckUpdate, grayOptIn, autoExtractMemory,
              s3Endpoint, s3Bucket, s3AccessKey, s3SecretKey, s3Region,
              sshHost, sshPort, sshUser, sshAuthType, sshPassword, sshPrivateKey, sshPassphrase
     }
@@ -432,6 +436,7 @@ struct ModelSettings: Codable, Sendable {
         useMetalAuto = try c.decodeIfPresent(Bool.self, forKey: .useMetalAuto) ?? true
         kvCacheQuantize = try c.decodeIfPresent(Bool.self, forKey: .kvCacheQuantize) ?? false
         autoCheckUpdate = try c.decodeIfPresent(Bool.self, forKey: .autoCheckUpdate) ?? true
+        grayOptIn = try c.decodeIfPresent(Bool.self, forKey: .grayOptIn) ?? false
         autoExtractMemory = try c.decodeIfPresent(Bool.self, forKey: .autoExtractMemory) ?? false
         s3Endpoint = try c.decodeIfPresent(String.self, forKey: .s3Endpoint) ?? ""
         s3Bucket = try c.decodeIfPresent(String.self, forKey: .s3Bucket) ?? ""
@@ -481,6 +486,7 @@ struct ModelSettings: Codable, Sendable {
         try c.encode(useMetalAuto, forKey: .useMetalAuto)
         try c.encode(kvCacheQuantize, forKey: .kvCacheQuantize)
         try c.encode(autoCheckUpdate, forKey: .autoCheckUpdate)
+        try c.encode(grayOptIn, forKey: .grayOptIn)
         try c.encode(autoExtractMemory, forKey: .autoExtractMemory)
         try c.encode(s3Endpoint, forKey: .s3Endpoint)
         try c.encode(s3Bucket, forKey: .s3Bucket)

@@ -140,8 +140,18 @@ struct PluginsView: View {
                 } label: {
                     HStack(alignment: .top, spacing: 10) {
                         VStack(alignment: .leading, spacing: 3) {
-                            Text(update.entry.name)
-                                .font(.subheadline.weight(.semibold))
+                            HStack(spacing: 6) {
+                                Text(update.entry.name)
+                                    .font(.subheadline.weight(.semibold))
+                                if pluginManager.isGrayModule(update.entry) {
+                                    Text("灰度")
+                                        .font(.caption2.weight(.semibold))
+                                        .padding(.horizontal, 5)
+                                        .padding(.vertical, 1)
+                                        .background(Color.orange.opacity(0.15), in: Capsule())
+                                        .foregroundStyle(.orange)
+                                }
+                            }
                             Text(update.entry.description)
                                 .font(.caption)
                                 .foregroundStyle(.secondary)

@@ -17,6 +17,13 @@ final class UpdateCheckerService: ObservableObject {
     @Published private(set) var lastChecked = false
     /// 最近一次检查失败的原因（nil = 成功或尚未检查）。UI 用它区分「已是最新」与「检查失败」。
     @Published private(set) var lastError: String?
+    /// 当前是否处于灰度通道（命中灰度 or 已开启参与灰度）
+    @Published private(set) var isGray = false
+    /// 灰度比例（有活跃灰度时显示）
+    @Published private(set) var grayPercent: Int?
+
+    /// 用户是否强制参与灰度（微信式内测开关）
+    static let grayOptInKey = "update_gray_opt_in"
 
     private let repoAPI = "https://api.github.com/repos/nmn999999999/LocalAI-clean/releases/latest"
     private let lastCheckKey = "update_last_check_ts"
@@ -42,12 +49,25 @@ final class UpdateCheckerService: ObservableObject {
     }
 
     /// 执行检查（手动 / 自动）。失败时记录 lastError，UI 显示「检查失败」而非误导性的「已是最新」。
+    /// 优先级：灰度索引 update/index.json（支持微信式灰度）→ 失败时回退 GitHub releases/latest。
     func check() async {
         guard !isChecking else { return }
         isChecking = true
         defer { isChecking = false }
         defer { lastChecked = true }
 
+        let optIn = UserDefaults.standard.bool(forKey: Self.grayOptInKey)
+
+        // 1) 灰度索引
+        if await checkGrayIndex(optIn: optIn) {
+            lastError = nil
+            UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: lastCheckKey)
+            return
+        }
+
+        // 2) 回退：GitHub releases/latest（无灰度能力）
+        isGray = false
+        grayPercent = nil
         guard let url = URL(string: repoAPI) else {
             lastError = "无效的更新地址"
             return
@@ -74,7 +94,6 @@ final class UpdateCheckerService: ObservableObject {
             if let html = json["html_url"] as? String {
                 releaseURL = URL(string: html)
             }
-            // 找 iOS 安装包资产（.ipa）
             downloadURL = nil
             if let assets = json["assets"] as? [[String: Any]] {
                 for asset in assets {
@@ -90,6 +109,36 @@ final class UpdateCheckerService: ObservableObject {
             UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: lastCheckKey)
         } catch {
             lastError = "网络请求失败: \(error.localizedDescription.prefix(60))"
+        }
+    }
+
+    /// 从灰度索引解析对当前设备生效的版本。返回是否成功（网络/解析均成功）。
+    private func checkGrayIndex(optIn: Bool) async -> Bool {
+        guard let url = URL(string: UpdatePolicy.indexURL) else { return false }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 15
+        request.setValue("LocalAI-iOS/\(currentVersion)", forHTTPHeaderField: "User-Agent")
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+                return false
+            }
+            let decoder = JSONDecoder()
+            decoder.keyDecodingStrategy = .convertFromSnakeCase
+            guard let index = try? decoder.decode(AppUpdateIndex.self, from: data) else {
+                return false
+            }
+            let resolved = UpdatePolicy.resolveAppUpdate(index, optInGray: optIn)
+            isGray = resolved.isGray
+            grayPercent = index.gray?.enabled == true ? index.gray?.percent : nil
+            latestTag = resolved.version
+            latestName = resolved.isGray ? "\(resolved.version)（灰度）" : resolved.version
+            releaseNotes = resolved.notes
+            releaseURL = resolved.isGray ? nil : URL(string: "https://github.com/nmn999999999/LocalAI-clean/releases/latest")
+            downloadURL = resolved.ipa
+            return true
+        } catch {
+            return false
         }
     }
 
