@@ -94,7 +94,7 @@ struct ChatView: View {
                             searchResults = []
                         }
                     }
-                if llmService.isModelReady {
+                if canChat {
                     agentStepsBar
                 }
                 inputBar
@@ -223,7 +223,7 @@ struct ChatView: View {
             Text(canChat
                  ? (providerStore.hasCloudSelection
                     ? "当前云端: \(providerStore.selectionText)"
-                    : t("在下方输入消息，或开启 Agent 模式使用工具"))
+                    : (llmService.loadedModelName.map { "本地模型: \($0)" } ?? t("在下方输入消息，或开启 Agent 模式使用工具")))
                  : t("前往「模型」页下载或导入 GGUF 模型"))
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
@@ -851,7 +851,15 @@ struct ChatView: View {
     private func maybeAutoTitle() {
         guard titleTask == nil else { return }
         let conv = chatStore.currentOrNew
-        guard conv.title == "新对话", conv.messages.count >= 3, canChat else { return }
+        guard conv.messages.count >= 3, canChat else { return }
+
+        // 标题是否值得 AI 优化：仍是默认「新对话」，或仍是第一条用户消息的
+        // 30 字前缀标题（updateTitle 生成的）→ 生成更简洁的 AI 标题。
+        // 旧条件只查 == "新对话"，但 updateTitle 会把前缀标题写入，导致 AI 标题永不触发。
+        let firstUser = conv.messages.first { $0.role == .user }?.content ?? ""
+        let prefixTitle = String(firstUser.prefix(30))
+        let needsTitle = conv.title == "新对话" || (!prefixTitle.isEmpty && conv.title == prefixTitle)
+        guard needsTitle else { return }
 
         let userMessages = conv.messages.filter { $0.role == .user }
         let first = userMessages.first?.content ?? ""
@@ -870,7 +878,8 @@ struct ChatView: View {
                 let text = try await llmService.complete(messages: history, settings: titleSettings)
                 let cleaned = Self.cleanTitle(text)
                 guard !cleaned.isEmpty else { return }
-                if var c = chatStore.conversation(id: conv.id), c.title == "新对话" {
+                // 期间用户没手动改名（仍为默认/前缀标题）才回写 AI 标题
+                if var c = chatStore.conversation(id: conv.id), c.title == "新对话" || c.title == prefixTitle {
                     c.title = cleaned
                     chatStore.upsert(c)
                 }

@@ -8,6 +8,8 @@ struct LocalAIApp: App {
     @StateObject private var chatStore = ChatStore()
     @StateObject private var agentService = AgentService()
     @StateObject private var theme = ThemeObserver()
+    /// 数据安全：切后台/退出时立即落盘（见 body 里的 onChange）
+    @Environment(\.scenePhase) private var scenePhase
     /// 监听「默认模型下载完成」信号的订阅（下载是异步的，完成后据此自动加载）。
     @State private var defaultDownloadCancellable: AnyCancellable?
 
@@ -26,6 +28,12 @@ struct LocalAIApp: App {
                     // 滚动更新：启动静默检查 GitHub Release（按设置开关 + 间隔节流）
                     if SettingsStorage.shared.settings.autoCheckUpdate {
                         await UpdateCheckerService.shared.checkIfNeeded()
+                    }
+                }
+                // 数据安全：切后台/退出时立即落盘对话，防止 500ms 防抖窗口内强杀 App 丢消息
+                .onChange(of: scenePhase) { _, phase in
+                    if phase != .active {
+                        chatStore.flushSave()
                     }
                 }
         }

@@ -21,11 +21,15 @@ struct ConversationListView: View {
                                 if let model = conv.modelName {
                                     ModelBadge(text: model)
                                 }
+                                Text("\(conv.messages.count) 条")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
                                 Text(conv.updatedAt.formatted(.relative(presentation: .named)))
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             }
                         }
+                        .padding(.vertical, 2)
                     }
                 }
                 .onDelete { indexSet in

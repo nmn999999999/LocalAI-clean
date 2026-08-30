@@ -4,9 +4,15 @@ import Foundation
 final class ChatStore: ObservableObject {
 
     @Published var conversations: [Conversation] = [] {
-        didSet { scheduleSave() }
+        didSet {
+            rebuildIndex()
+            scheduleSave()
+        }
     }
     @Published var currentConversationID: UUID?
+
+    /// id → 数组下标 的索引：会话多时让 conversation(id:)/current 从 O(n) 降到 O(1)
+    private var indexByID: [UUID: Int] = [:]
 
     private let saveURL: URL
     private var saveTask: Task<Void, Never>?
@@ -26,7 +32,12 @@ final class ChatStore: ObservableObject {
     // MARK: - 访问
 
     var current: Conversation? {
-        get { conversations.first { $0.id == currentConversationID } ?? conversations.first }
+        get {
+            if let id = currentConversationID, let i = indexByID[id] {
+                return conversations[i]
+            }
+            return conversations.first
+        }
         set {
             guard let newValue else { return }
             upsert(newValue)
@@ -42,7 +53,18 @@ final class ChatStore: ObservableObject {
     }
 
     func conversation(id: UUID) -> Conversation? {
-        conversations.first { $0.id == id }
+        if let i = indexByID[id] { return conversations[i] }
+        return nil
+    }
+
+    /// 重建 id 索引（conversations 每次变更后调用，O(n)）
+    private func rebuildIndex() {
+        var idx: [UUID: Int] = [:]
+        idx.reserveCapacity(conversations.count)
+        for (i, conv) in conversations.enumerated() {
+            idx[conv.id] = i
+        }
+        indexByID = idx
     }
 
     func upsert(_ conversation: Conversation) {
@@ -114,6 +136,14 @@ final class ChatStore: ObservableObject {
         }
     }
 
+    /// 立即落盘（忽略防抖）：App 切后台 / 即将终止时调用，避免 500ms 防抖窗口内
+    /// 强杀 App 丢失最近消息。流式中也允许写（快照，重启后 isStreaming 会被复位）。
+    func flushSave() {
+        saveTask?.cancel()
+        saveTask = nil
+        persist()
+    }
+
     private func persist() {
         let snapshot = conversations
         let url = saveURL
@@ -160,13 +190,17 @@ final class ChatStore: ObservableObject {
 
     func search(query: String) -> [SearchResult] {
         guard !query.isEmpty else { return [] }
-        
+
         var results: [SearchResult] = []
-        
+        // 上限：防止超大会话库时主线程扫描过久 / 结果刷屏
+        let resultCap = 100
+
         for conversation in conversations {
             for message in conversation.messages {
+                if results.count >= resultCap { return results }
                 let content = message.content
-                guard let range = content.range(of: query, options: .caseInsensitive) else { continue }
+                guard !content.isEmpty,
+                      let range = content.range(of: query, options: .caseInsensitive) else { continue }
                 
                 let start = content.distance(from: content.startIndex, to: range.lowerBound)
                 let length = content.distance(from: range.lowerBound, to: range.upperBound)
@@ -189,12 +223,15 @@ final class ChatStore: ObservableObject {
 
     func search(query: String, in conversationID: UUID) -> [SearchResult] {
         guard !query.isEmpty, let conversation = conversation(id: conversationID) else { return [] }
-        
+
         var results: [SearchResult] = []
-        
+        let resultCap = 100
+
         for message in conversation.messages {
+            if results.count >= resultCap { return results }
             let content = message.content
-            guard let range = content.range(of: query, options: .caseInsensitive) else { continue }
+            guard !content.isEmpty,
+                  let range = content.range(of: query, options: .caseInsensitive) else { continue }
             
             let start = content.distance(from: content.startIndex, to: range.lowerBound)
             let length = content.distance(from: range.lowerBound, to: range.upperBound)

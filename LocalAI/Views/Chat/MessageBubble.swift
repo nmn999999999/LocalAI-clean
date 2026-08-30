@@ -135,6 +135,9 @@ struct MessageBubble: View {
                         .textSelection(.enabled)
                 }
             }
+            .padding(10)
+            .frame(maxWidth: Self.bubbleMaxWidth, alignment: .leading)
+            .background(.quaternary.opacity(0.5), in: .rect(cornerRadius: 12))
 
         case .system:
             EmptyView()
