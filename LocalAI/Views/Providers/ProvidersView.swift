@@ -203,11 +203,6 @@ struct ProvidersView: View {
 
     private var mcpSection: some View {
         Section {
-            if mcpService.servers.isEmpty {
-                Text("未添加 MCP 服务器。连接后工具自动加入 Agent 工具目录。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
             ForEach(mcpService.servers) { server in
                 MCPServerRow(
                     server: server,
@@ -222,6 +217,37 @@ struct ProvidersView: View {
                         callingTool = (server, tool)
                     }
                 )
+            }
+            if mcpService.servers.isEmpty {
+                Text("未添加 MCP 服务器。连接后工具自动加入 Agent 工具目录。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            // 免费公共 MCP 服务预设（一键添加 + 连接）
+            Text("🎁 免费公共 MCP（免密钥）")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .padding(.top, 4)
+            ForEach(MCPService.freePresets) { preset in
+                Button {
+                    let server = mcpService.addPreset(preset)
+                    Task { await mcpService.connect(server) }
+                } label: {
+                    HStack(spacing: 10) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(preset.name)
+                                .font(.subheadline.weight(.medium))
+                            Text(preset.note)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Image(systemName: "plus.circle.fill")
+                            .foregroundStyle(.tint)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
             }
         } header: {
             HStack {

@@ -560,10 +560,14 @@ struct ChatView: View {
                     Section(t("本地模型")) {
                         ForEach(modelManager.downloadedModels) { model in
                             Button {
+                                // 选中本地模型 = 明确切换到本地引擎：清除云端选择，避免二者同时选中、
+                                // 且 resolveEngine 仍优先走云端导致本地选择无效。
+                                providerStore.select(providerID: nil, model: "")
                                 Task { await loadModel(model) }
                             } label: {
                                 Label(model.name, systemImage:
-                                    llmService.loadedModelName == model.name ? "checkmark" : "cpu")
+                                    (!providerStore.hasCloudSelection && llmService.loadedModelName == model.name)
+                                    ? "checkmark" : "cpu")
                             }
                         }
                     }

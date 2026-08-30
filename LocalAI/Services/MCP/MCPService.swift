@@ -12,6 +12,28 @@ final class MCPService: ObservableObject {
     }
     @Published var connectingID: UUID?
 
+    /// 免费公共 MCP 服务预设（免密钥 · streamable HTTP）。
+    /// 均为公开社区长期运行的服务：连接失败时显示错误，可随时删除。
+    struct MCPPreset: Identifiable, Sendable {
+        var id: String { name }
+        let name: String
+        let url: String
+        let note: String
+    }
+
+    static let freePresets: [MCPPreset] = [
+        MCPPreset(
+            name: "DeepWiki",
+            url: "https://mcp.deepwiki.com/mcp",
+            note: "查询任意 GitHub 仓库的官方文档（免费免密钥）"
+        ),
+        MCPPreset(
+            name: "ContextX · Grok 搜索",
+            url: "https://mcp.twitter.monster/mcp",
+            note: "联网搜索（Grok 引擎，免费免密钥）"
+        ),
+    ]
+
     private let saveURL: URL
 
     init() {
@@ -37,6 +59,17 @@ final class MCPService: ObservableObject {
 
     func delete(_ server: MCPServer) {
         servers.removeAll { $0.id == server.id }
+    }
+
+    /// 一键添加免费预设：同名已存在则直接返回（不重复添加）。
+    @discardableResult
+    func addPreset(_ preset: MCPPreset) -> MCPServer {
+        if let existing = servers.first(where: { $0.name == preset.name }) {
+            return existing
+        }
+        let server = MCPServer(name: preset.name, url: preset.url)
+        servers.append(server)
+        return server
     }
 
     // MARK: - 连接 / 断开
