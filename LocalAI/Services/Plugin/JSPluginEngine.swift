@@ -252,11 +252,24 @@ final class JSPluginEngine: @unchecked Sendable {
             return "插件错误: \(error)"
         }
         if let result = dict["result"] {
-            if let s = result as? String { return s }
-            if let text = Self.safeJSONText(result) { return text }
-            return "\(result)"
+            let text: String
+            if let s = result as? String { text = s }
+            else if let t = Self.safeJSONText(result) { text = t }
+            else { text = "\(result)" }
+            // 防超长结果（尤其单行 JSON）卡死 SwiftUI Text 排版（v0.3.39 修复：
+            // UIKit-runloop 卡死报告主线程 354/354 采样在 ResolvedStyledText.layers）
+            return Self.capped(text, limit: 4000)
         }
         return "(无返回值)"
+    }
+
+    /// 截断超长文本（保留开头与结尾各一半），防止巨型字符串触发昂贵文本排版
+    static func capped(_ text: String, limit: Int) -> String {
+        if text.count <= limit { return text }
+        let half = limit / 2
+        let head = String(text.prefix(half))
+        let tail = String(text.suffix(half))
+        return head + "\n…（结果过长，已截断）…\n" + tail
     }
 
     /// 安全序列化（无 NSJSONSerialization，永不抛异常；NaN/Infinity → null）

@@ -65,6 +65,7 @@ struct ModuleDetailView: View {
                                 .font(.system(.caption2, design: .monospaced))
                                 .foregroundStyle(.secondary)
                                 .textSelection(.enabled)
+                                .lineLimit(20)
                                 .padding(6)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .background(.quaternary.opacity(0.5), in: .rect(cornerRadius: 8))
