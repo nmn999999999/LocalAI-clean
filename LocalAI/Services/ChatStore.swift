@@ -80,10 +80,32 @@ final class ChatStore: ObservableObject {
         currentConversationID = conv.id
     }
 
+    /// 从备份整体恢复会话（Backup/Restore）
+    func restoreFromBackup(_ newConversations: [Conversation]) {
+        let sanitized = newConversations.map { conv -> Conversation in
+            var c = conv
+            c.messages = c.messages.map { m in
+                var mm = m
+                mm.isStreaming = false
+                return mm
+            }
+            return c
+        }
+        conversations = sanitized.isEmpty ? [Conversation()] : sanitized
+        currentConversationID = conversations.first?.id
+    }
+
     // MARK: - 持久化
 
     private func scheduleSave() {
-        if conversations.last?.messages.last?.isStreaming == true { return }
+        // 检查当前正在生成的对话（或最近被修改的）的最新消息是否在流式输出。
+        // 之前用 `conversations.last` 是错的——`conversations.last` 是最旧对话，
+        // 新对话通过 `insert(_:at:0)` 插到开头。结果：用户当前对话在流式时，
+        // 500ms 内所有 token 更新全部被跳过，重启即丢失生成内容。
+        if let target = conversations.first(where: { $0.id == currentConversationID }) ?? conversations.first,
+           target.messages.last?.isStreaming == true {
+            return
+        }
         saveTask?.cancel()
         saveTask = Task {
             try? await Task.sleep(nanoseconds: 500_000_000)

@@ -9,6 +9,10 @@ struct AgentToolDefinition: Codable, Identifiable, Sendable {
     let name: String
     let description: String
     let parameters: [String: ParameterSchema]
+    /// 该工具调用前是否需要用户授权(opencode 风格).
+    /// 网络/IPC 类副作用工具(SSH、MCP)默认 true；纯计算类(calculator/encoder)默认 false。
+    /// 旧存档反序列化时若缺该字段，fallback 为 false（保持旧行为，向后兼容）。
+    let requiresApproval: Bool
 
     struct ParameterSchema: Codable, Sendable {
         let type: String
@@ -19,6 +23,43 @@ struct AgentToolDefinition: Codable, Identifiable, Sendable {
             case type, description
             case enumValues = "enum"
         }
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, description, parameters, requiresApproval
+    }
+
+    init(
+        id: String,
+        name: String,
+        description: String,
+        parameters: [String: ParameterSchema],
+        requiresApproval: Bool = false
+    ) {
+        self.id = id
+        self.name = name
+        self.description = description
+        self.parameters = parameters
+        self.requiresApproval = requiresApproval
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try c.decode(String.self, forKey: .id)
+        self.name = try c.decode(String.self, forKey: .name)
+        self.description = try c.decode(String.self, forKey: .description)
+        self.parameters = try c.decode([String: ParameterSchema].self, forKey: .parameters)
+        // 旧存档没有 requiresApproval：默认 false（保持旧行为，向后兼容）
+        self.requiresApproval = try c.decodeIfPresent(Bool.self, forKey: .requiresApproval) ?? false
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(name, forKey: .name)
+        try c.encode(description, forKey: .description)
+        try c.encode(parameters, forKey: .parameters)
+        try c.encode(requiresApproval, forKey: .requiresApproval)
     }
 }
 
@@ -77,24 +118,93 @@ enum BuiltInTools {
 
     static let allTools: [AgentToolDefinition] = [
         AgentToolDefinition(
+            id: "http_get",
+            name: "http_get",
+            description: "发起 HTTP GET 请求抓取网页 / JSON API 内容(仅 https)。返回文本;若响应是 JSON 会自动美化。适合获取天气 API、GitHub API、新闻 RSS 等公开数据",
+            parameters: [
+                "url": .init(type: "string", description: "完整 URL(https://...),如 https://api.github.com/repos/nmn999999999/LocalAI-clean/releases/latest", enumValues: nil),
+                "timeout": .init(type: "number", description: "超时秒数(可选,默认 15)", enumValues: nil)
+            ],
+            requiresApproval: true,  // 网络请求会访问外部站点
+        ),
+        AgentToolDefinition(
+            id: "device_info",
+            name: "device_info",
+            description: "获取当前 iOS 设备信息:机型、系统版本、内存/存储容量、当前电量、进程架构等",
+            parameters: [:],
+            requiresApproval: false,
+        ),
+        AgentToolDefinition(
+            id: "json_query",
+            name: "json_query",
+            description: "从 JSON 字符串中提取指定 key 的值(支持 a.b.c 点路径与 [0] 数组下标),返回格式化文本",
+            parameters: [
+                "json": .init(type: "string", description: "要查询的 JSON 字符串", enumValues: nil),
+                "path": .init(type: "string", description: "取值路径,如 user.name、items[0].title", enumValues: nil)
+            ],
+            requiresApproval: false,
+        ),
+        AgentToolDefinition(
+            id: "timestamp",
+            name: "timestamp",
+            description: "Unix 时间戳与日期互转:给 0-1e10 之间数字按秒解释,给 '2026-08-29 10:00:00' 或 '2026-08-29' 转时间戳;支持时区偏移(hours)",
+            parameters: [
+                "value": .init(type: "string", description: "要转换的值:秒级时间戳(如 1756483200)或日期字符串(如 2026-08-29 10:00:00)", enumValues: nil),
+                "timezone_offset": .init(type: "number", description: "时区偏移小时数(可选,默认 +8 中国时区)", enumValues: nil)
+            ],
+            requiresApproval: false,
+        ),
+        AgentToolDefinition(
+            id: "extract_urls",
+            name: "extract_urls",
+            description: "从一段文本中提取所有 URL 链接,返回去重列表",
+            parameters: [
+                "text": .init(type: "string", description: "要提取链接的文本", enumValues: nil)
+            ],
+            requiresApproval: false,
+        ),
+        AgentToolDefinition(
+            id: "csv_table",
+            name: "csv_table",
+            description: "把 CSV / TSV 文本解析为对齐的表格展示,可选带表头;分隔符默认逗号",
+            parameters: [
+                "text": .init(type: "string", description: "CSV/TSV 原始文本(每行一条记录)", enumValues: nil),
+                "delimiter": .init(type: "string", description: "分隔符(可选,默认 ,;传 tab 用 \\t)", enumValues: nil),
+                "header": .init(type: "boolean", description: "首行是否为表头(默认 true)", enumValues: nil)
+            ],
+            requiresApproval: false,
+        ),
+        AgentToolDefinition(
+            id: "jwt_decode",
+            name: "jwt_decode",
+            description: "解码 JWT(不验签):提取 header 与 payload 的 JSON 内容并美化,附带过期时间解读",
+            parameters: [
+                "token": .init(type: "string", description: "JWT 字符串(形如 eyJhbGciOi... .eyJzdWIiOi... .signature)", enumValues: nil)
+            ],
+            requiresApproval: false,
+        ),
+        AgentToolDefinition(
             id: "calculator",
             name: "calculator",
             description: "计算数学表达式，支持 + - * / % ^、括号、函数(sqrt/abs/round/sin/cos/tan/log/exp/min/max/pow)与常量(pi/e)",
             parameters: [
                 "expression": .init(type: "string", description: "数学表达式，如 2+3*4 或 sqrt(16)", enumValues: nil)
-            ]
+            ],
+            requiresApproval: false,
         ),
         AgentToolDefinition(
             id: "current_time",
             name: "current_time",
             description: "获取当前日期和时间",
-            parameters: [:]
+            parameters: [:],
+            requiresApproval: false,
         ),
         AgentToolDefinition(
             id: "generate_uuid",
             name: "generate_uuid",
             description: "生成一个UUID",
-            parameters: [:]
+            parameters: [:],
+            requiresApproval: false,
         ),
         AgentToolDefinition(
             id: "random_number",
@@ -103,7 +213,8 @@ enum BuiltInTools {
             parameters: [
                 "min": .init(type: "number", description: "最小值（含），默认 1", enumValues: nil),
                 "max": .init(type: "number", description: "最大值（含），默认 100", enumValues: nil)
-            ]
+            ],
+            requiresApproval: false,
         ),
         AgentToolDefinition(
             id: "word_count",
@@ -111,7 +222,8 @@ enum BuiltInTools {
             description: "统计文本的字数、字符数和行数",
             parameters: [
                 "text": .init(type: "string", description: "要统计的文本", enumValues: nil)
-            ]
+            ],
+            requiresApproval: false,
         ),
         AgentToolDefinition(
             id: "text_transform",
@@ -120,7 +232,8 @@ enum BuiltInTools {
             parameters: [
                 "text": .init(type: "string", description: "要转换的文本", enumValues: nil),
                 "transform": .init(type: "string", description: "转换类型", enumValues: ["uppercase", "lowercase", "reverse", "base64_encode", "base64_decode"])
-            ]
+            ],
+            requiresApproval: false,
         ),
         AgentToolDefinition(
             id: "date_add",
@@ -129,7 +242,8 @@ enum BuiltInTools {
             parameters: [
                 "date": .init(type: "string", description: "日期，格式 yyyy-MM-dd，可省略表示今天", enumValues: nil),
                 "days": .init(type: "number", description: "加减的天数，负数表示往前", enumValues: nil)
-            ]
+            ],
+            requiresApproval: false,
         ),
         AgentToolDefinition(
             id: "date_diff",
@@ -138,7 +252,8 @@ enum BuiltInTools {
             parameters: [
                 "date1": .init(type: "string", description: "起始日期 yyyy-MM-dd", enumValues: nil),
                 "date2": .init(type: "string", description: "结束日期 yyyy-MM-dd", enumValues: nil)
-            ]
+            ],
+            requiresApproval: false,
         ),
         AgentToolDefinition(
             id: "hash_text",
@@ -147,7 +262,8 @@ enum BuiltInTools {
             parameters: [
                 "text": .init(type: "string", description: "要哈希的文本", enumValues: nil),
                 "algorithm": .init(type: "string", description: "算法", enumValues: ["md5", "sha1", "sha256"])
-            ]
+            ],
+            requiresApproval: false,
         ),
         AgentToolDefinition(
             id: "json_format",
@@ -156,7 +272,8 @@ enum BuiltInTools {
             parameters: [
                 "json": .init(type: "string", description: "要处理的 JSON 字符串", enumValues: nil),
                 "pretty": .init(type: "boolean", description: "是否美化输出（默认 true）", enumValues: nil)
-            ]
+            ],
+            requiresApproval: false,
         ),
         AgentToolDefinition(
             id: "url_codec",
@@ -165,7 +282,8 @@ enum BuiltInTools {
             parameters: [
                 "text": .init(type: "string", description: "要处理的文本", enumValues: nil),
                 "mode": .init(type: "string", description: "模式", enumValues: ["encode", "decode"])
-            ]
+            ],
+            requiresApproval: false,
         ),
         AgentToolDefinition(
             id: "note",
@@ -175,7 +293,8 @@ enum BuiltInTools {
                 "op": .init(type: "string", description: "操作", enumValues: ["save", "read", "list", "delete"]),
                 "name": .init(type: "string", description: "笔记名称（save/read/delete 必填）", enumValues: nil),
                 "content": .init(type: "string", description: "笔记内容（save 必填）", enumValues: nil)
-            ]
+            ],
+            requiresApproval: false,
         ),
         AgentToolDefinition(
             id: "clipboard",
@@ -184,7 +303,8 @@ enum BuiltInTools {
             parameters: [
                 "op": .init(type: "string", description: "操作", enumValues: ["get", "set"]),
                 "text": .init(type: "string", description: "要写入剪贴板的内容（set 必填）", enumValues: nil)
-            ]
+            ],
+            requiresApproval: false,
         ),
         AgentToolDefinition(
             id: "web_search",
@@ -192,7 +312,8 @@ enum BuiltInTools {
             description: "联网搜索网页（Bing 等），返回相关结果标题、链接与摘要",
             parameters: [
                 "query": .init(type: "string", description: "搜索关键词", enumValues: nil)
-            ]
+            ],
+            requiresApproval: false,
         ),
         AgentToolDefinition(
             id: "regex_extract",
@@ -201,7 +322,8 @@ enum BuiltInTools {
             parameters: [
                 "text": .init(type: "string", description: "要搜索的文本", enumValues: nil),
                 "pattern": .init(type: "string", description: "正则表达式模式", enumValues: nil)
-            ]
+            ],
+            requiresApproval: false,
         ),
         AgentToolDefinition(
             id: "text_summary",
@@ -210,7 +332,8 @@ enum BuiltInTools {
             parameters: [
                 "text": .init(type: "string", description: "要摘要的文本", enumValues: nil),
                 "max_length": .init(type: "number", description: "摘要最大长度（可选，默认200）", enumValues: nil)
-            ]
+            ],
+            requiresApproval: false,
         ),
         AgentToolDefinition(
             id: "number_base",
@@ -220,7 +343,8 @@ enum BuiltInTools {
                 "value": .init(type: "string", description: "要转换的数值，如 255 或 FF", enumValues: nil),
                 "from": .init(type: "string", description: "原进制", enumValues: ["decimal", "binary", "octal", "hex"]),
                 "to": .init(type: "string", description: "目标进制", enumValues: ["decimal", "binary", "octal", "hex"])
-            ]
+            ],
+            requiresApproval: false,
         ),
         AgentToolDefinition(
             id: "color_convert",
@@ -229,7 +353,8 @@ enum BuiltInTools {
             parameters: [
                 "mode": .init(type: "string", description: "转换方向", enumValues: ["to_hex", "to_rgb"]),
                 "value": .init(type: "string", description: "to_hex 时传 RGB 如 255,0,0；to_rgb 时传十六进制如 #ff0000 或 ff0000", enumValues: nil)
-            ]
+            ],
+            requiresApproval: false,
         ),
         AgentToolDefinition(
             id: "sort_text",
@@ -240,7 +365,8 @@ enum BuiltInTools {
                 "reverse": .init(type: "boolean", description: "是否逆序（默认 false）", enumValues: nil),
                 "ignore_case": .init(type: "boolean", description: "排序时忽略大小写（默认 false）", enumValues: nil),
                 "dedup": .init(type: "boolean", description: "是否去除重复行（默认 false）", enumValues: nil)
-            ]
+            ],
+            requiresApproval: false,
         ),
         AgentToolDefinition(
             id: "find_replace",
@@ -252,7 +378,8 @@ enum BuiltInTools {
                 "replace": .init(type: "string", description: "替换为的内容（默认空串）", enumValues: nil),
                 "regex": .init(type: "boolean", description: "find 是否按正则匹配（默认 false）", enumValues: nil),
                 "all": .init(type: "boolean", description: "是否替换全部（默认 true；false 仅替换首个）", enumValues: nil)
-            ]
+            ],
+            requiresApproval: false,
         ),
         AgentToolDefinition(
             id: "case_convert",
@@ -261,7 +388,8 @@ enum BuiltInTools {
             parameters: [
                 "text": .init(type: "string", description: "要转换的标识符", enumValues: nil),
                 "style": .init(type: "string", description: "目标风格", enumValues: ["snake", "camel", "pascal", "kebab"])
-            ]
+            ],
+            requiresApproval: false,
         ),
         AgentToolDefinition(
             id: "password_generate",
@@ -273,7 +401,8 @@ enum BuiltInTools {
                 "symbols": .init(type: "boolean", description: "包含符号（默认 true）", enumValues: nil),
                 "uppercase": .init(type: "boolean", description: "包含大写字母（默认 true）", enumValues: nil),
                 "lowercase": .init(type: "boolean", description: "包含小写字母（默认 true）", enumValues: nil)
-            ]
+            ],
+            requiresApproval: false,
         ),
         AgentToolDefinition(
             id: "roman",
@@ -281,7 +410,8 @@ enum BuiltInTools {
             description: "罗马数字与阿拉伯数字互转（自动识别方向）",
             parameters: [
                 "value": .init(type: "string", description: "阿拉伯数字(如 1994)或罗马数字(如 MCMXCIV)", enumValues: nil)
-            ]
+            ],
+            requiresApproval: false,
         ),
         AgentToolDefinition(
             id: "unit_convert",
@@ -291,7 +421,8 @@ enum BuiltInTools {
                 "value": .init(type: "number", description: "数值", enumValues: nil),
                 "from": .init(type: "string", description: "原单位（如 km/m/kg/g/°C/°F/K/L/ml/MB/GB）", enumValues: nil),
                 "to": .init(type: "string", description: "目标单位", enumValues: nil)
-            ]
+            ],
+            requiresApproval: false,
         ),
         AgentToolDefinition(
             id: "ssh",
@@ -306,7 +437,17 @@ enum BuiltInTools {
                 "password": .init(type: "string", description: "密码（auth_type=password 时使用；留空则用设置中的密码）", enumValues: nil),
                 "private_key": .init(type: "string", description: "私钥 PEM 内容（auth_type=key 时使用；留空则用设置中的私钥）", enumValues: nil),
                 "passphrase": .init(type: "string", description: "私钥口令（可选，留空则用设置中的口令）", enumValues: nil)
-            ]
+            ],
+            requiresApproval: true,  // SSH 会真实执行远程命令，必须经用户授权
+        ),
+        AgentToolDefinition(
+            id: "shell",
+            name: "shell",
+            description: "iOS 沙盒内受限 shell,执行文件 / 文本 / 系统类命令(ls、cat、echo、grep、sort、wc、head、tail、mkdir、rm、cp、mv、pwd、cd、stat、export 等),路径限定在 app 沙盒下 ~/Documents/shellbox。支持通配符、管道(|)、重定向(> >>)、链式执行(; && ||)。例如:'ls *.txt | head -5'、'grep -i keyword notes.md'、'echo hello > out.txt'。输入 'help' 查看完整命令列表",
+            parameters: [
+                "command": .init(type: "string", description: "要执行的 shell 命令字符串(必填)。可一次写多段,用 ; 或 | 或 && 串连", enumValues: nil)
+            ],
+            requiresApproval: true,  // 沙盒 shell 会写入/删除文件,需要用户授权
         ),
     ]
 
@@ -345,6 +486,14 @@ enum BuiltInTools {
         case "roman":           return executeRoman(arguments: arguments)
         case "unit_convert":    return executeUnitConvert(arguments: arguments)
         case "ssh":             return executeSSH(arguments: arguments)
+        case "shell":           return executeShell(arguments: arguments)
+        case "http_get":        return await executeHTTPGet(arguments: arguments)
+        case "device_info":     return executeDeviceInfo()
+        case "json_query":      return executeJSONQuery(arguments: arguments)
+        case "timestamp":       return executeTimestamp(arguments: arguments)
+        case "extract_urls":    return executeExtractURLs(arguments: arguments)
+        case "csv_table":       return executeCSVTable(arguments: arguments)
+        case "jwt_decode":      return executeJWTDecode(arguments: arguments)
         default:
             return "未知工具: \(toolName)"
         }
@@ -1245,5 +1394,349 @@ enum BuiltInTools {
             return "SSH 执行失败（错误码 \(rc)）: \(output)"
         }
         return "命令退出码: \(rc)\n--- 输出 ---\n\(output)"
+    }
+
+    /// 沙盒 shell 执行(走 ShellSandbox 的受限命令解释器)
+    private static func executeShell(arguments: [String: Any]) -> String {
+        guard let command = arguments["command"] as? String, !command.isEmpty else {
+            return "错误: 缺少 command 参数"
+        }
+        // 输出截断保护:避免一次性 output 巨大撑爆上下文
+        let raw = ShellSandbox.run(command)
+        if raw.count > 4000 {
+            return String(raw.prefix(4000)) + "\n…(输出过长，已截断)"
+        }
+        return raw
+    }
+
+    // MARK: - v0.3.18 新增工具
+
+    /// HTTP GET 抓取网页/API(仅 https;JSON 自动美化)
+    private static func executeHTTPGet(arguments: [String: Any]) async -> String {
+        guard let urlString = arguments["url"] as? String, !urlString.isEmpty else {
+            return "错误: 缺少 url 参数"
+        }
+        // 强制 https(ATS 默认允许;http 直接提示改用 https)
+        guard let lower = URL(string: urlString), lower.scheme?.lowercased() == "https" else {
+            return "错误: 仅支持 https URL(ATS 默认禁止明文 http)"
+        }
+        let timeout = (arguments["timeout"] as? NSNumber)?.doubleValue ?? 15
+        var request = URLRequest(url: lower)
+        request.timeoutInterval = timeout
+        request.setValue("LocalAI-Agent/0.3 (iOS Sandbox)", forHTTPHeaderField: "User-Agent")
+        request.setValue("application/json, text/plain, */*", forHTTPHeaderField: "Accept")
+
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse else {
+                return "错误: 无效响应"
+            }
+            guard (200...299).contains(http.statusCode) else {
+                let body = String(data: data, encoding: .utf8) ?? ""
+                return "HTTP \(http.statusCode): \(String(body.prefix(300)))"
+            }
+            // JSON 美化输出
+            if let obj = try? JSONSerialization.jsonObject(with: data),
+               let pretty = try? JSONSerialization.data(withJSONObject: obj, options: [.prettyPrinted, .sortedKeys]),
+               let str = String(data: pretty, encoding: .utf8) {
+                return str.count > 6000 ? String(str.prefix(6000)) + "\n…(内容过长，已截断)" : str
+            }
+            let text = String(data: data, encoding: .utf8) ?? "(非 UTF-8 内容,返回 \(data.count) 字节)"
+            return text.count > 6000 ? String(text.prefix(6000)) + "\n…(内容过长，已截断)" : text
+        } catch {
+            return "请求失败: \(error.localizedDescription)"
+        }
+    }
+
+    /// 设备信息(iOS)
+    private static func executeDeviceInfo() -> String {
+        #if os(iOS)
+        let device = UIDevice.current
+        let system = ProcessInfo.processInfo
+        let fm = FileManager.default
+        let fileSystem: String
+        if let attrs = try? fm.attributesOfFileSystem(forPath: NSHomeDirectory()),
+           let total = attrs[.systemSize] as? Int64,
+           let free = attrs[.systemFreeSize] as? Int64 {
+            let gb = 1024.0 * 1024.0 * 1024.0
+            fileSystem = String(format: "总容量 %.1f GB,可用 %.1f GB", Double(total)/gb, Double(free)/gb)
+        } else {
+            fileSystem = "未知"
+        }
+        let battery: String
+        if device.isBatteryMonitoringEnabled {
+            let level = device.batteryLevel
+            battery = level < 0 ? "未知" : "\(Int(level * 100))%"
+        } else {
+            battery = "未启用"
+        }
+        var lines = [
+            "机型: \(device.model)",
+            "系统: \(device.systemName) \(device.systemVersion)",
+            "内存: \(system.physicalMemory / (1024*1024)) MB",
+            "文件系统: \(fileSystem)",
+            "电量: \(battery)",
+        ]
+        #if arch(arm64)
+        lines.insert("架构: arm64", at: 2)
+        #elseif arch(x86_64)
+        lines.insert("架构: x86_64", at: 2)
+        #endif
+        #if targetEnvironment(simulator)
+        lines.append("环境: 模拟器")
+        #else
+        lines.append("环境: 真机")
+        #endif
+        return lines.joined(separator: "\n")
+        #else
+        return "设备信息: 仅 iOS 可用"
+        #endif
+    }
+
+    /// JSON 取值(a.b.c 点路径 + [n] 下标)
+    private static func executeJSONQuery(arguments: [String: Any]) -> String {
+        guard let json = arguments["json"] as? String,
+              let path = arguments["path"] as? String else {
+            return "错误: 缺少 json / path 参数"
+        }
+        guard let data = json.data(using: .utf8),
+              let root = try? JSONSerialization.jsonObject(with: data) else {
+            return "错误: JSON 解析失败"
+        }
+        // 解析路径:a.b[0].c
+        let components = path.components(separatedBy: ".").filter { !$0.isEmpty }
+        var current: Any = root
+        for comp in components {
+            // 处理 [n] 下标
+            if let idx = comp.firstIndex(of: "["), comp.hasSuffix("]") {
+                let key = String(comp[..<idx])
+                let numStr = String(comp[comp.index(after: idx)..<comp.index(before: comp.endIndex)])
+                if let dict = current as? [String: Any], !key.isEmpty {
+                    guard let next = dict[key] else { return "错误: 路径 \(key) 不存在" }
+                    current = next
+                }
+                if let arr = current as? [Any], let n = Int(numStr) {
+                    guard n >= 0 && n < arr.count else { return "错误: 下标 \(n) 越界" }
+                    current = arr[n]
+                } else {
+                    return "错误: \(comp) 不是数组下标"
+                }
+            } else {
+                guard let dict = current as? [String: Any],
+                      let next = dict[comp] else {
+                    return "错误: 路径 \(comp) 不存在"
+                }
+                current = next
+            }
+        }
+        // 输出:标量直接转字符串,对象/数组美化
+        if let v = current as? String { return v }
+        if let v = current as? NSNumber {
+            return v.stringValue
+        }
+        if let v = current as? Bool { return v ? "true" : "false" }
+        if let obj = current as? [String: Any],
+           let d = try? JSONSerialization.data(withJSONObject: obj, options: [.prettyPrinted, .sortedKeys]),
+           let s = String(data: d, encoding: .utf8) {
+            return s
+        }
+        if let arr = current as? [Any],
+           let d = try? JSONSerialization.data(withJSONObject: arr, options: [.prettyPrinted]),
+           let s = String(data: d, encoding: .utf8) {
+            return s
+        }
+        return "\(current)"
+    }
+
+    /// Unix 时间戳与日期互转(时区偏移默认 +8)
+    private static func executeTimestamp(arguments: [String: Any]) -> String {
+        guard let value = arguments["value"] as? String, !value.isEmpty else {
+            return "错误: 缺少 value 参数"
+        }
+        let offsetHours = (arguments["timezone_offset"] as? NSNumber)?.intValue ?? 8
+        var tz = TimeZone(identifier: "UTC")!
+        if offsetHours != 0 {
+            tz = TimeZone(secondsFromGMT: offsetHours * 3600) ?? TimeZone(identifier: "UTC")!
+        }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        formatter.timeZone = tz
+
+        // 判断是数字(时间戳)还是日期
+        if let ts = Double(value), ts >= 0, ts < 4.1e9 {
+            let date = Date(timeIntervalSince1970: ts)
+            return "\(Int64(ts)) → \(formatter.string(from: date))"
+        } else {
+            let trimmed = value.trimmingCharacters(in: .whitespaces)
+            let formats = ["yyyy-MM-dd HH:mm:ss", "yyyy-MM-dd'T'HH:mm:ssZ", "yyyy-MM-dd HH:mm", "yyyy-MM-dd"]
+            for fmt in formats {
+                let f = DateFormatter()
+                f.dateFormat = fmt
+                f.timeZone = tz
+                if let date = f.date(from: trimmed) {
+                    return "\(trimmed) → \(Int64(date.timeIntervalSince1970)) 秒 (UTC\(offsetHours >= 0 ? "+" : "")\(offsetHours))"
+                }
+            }
+            return "错误: 无法解析日期(支持 yyyy-MM-dd [HH:mm[:ss]])"
+        }
+    }
+
+    /// 从文本提取所有 URL
+    private static func executeExtractURLs(arguments: [String: Any]) -> String {
+        guard let text = arguments["text"] as? String, !text.isEmpty else {
+            return "错误: 缺少 text 参数"
+        }
+        // 宽松 URL 检测:http(s):// 或 www.
+        let pattern = #"(?:https?://[^\s<>\"]+|www\.[^\s<>\"]+)"#
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
+            return "错误: 正则初始化失败"
+        }
+        let ns = text as NSString
+        var urls: [String] = []
+        let matches = regex.matches(in: text, range: NSRange(location: 0, length: ns.length))
+        for m in matches {
+            let s = ns.substring(with: m.range).trimmingCharacters(in: .punctuationCharacters)
+            if !s.isEmpty && !urls.contains(s) { urls.append(s) }
+        }
+        return urls.isEmpty ? "(未找到 URL)" : urls.joined(separator: "\n")
+    }
+
+    /// CSV/TSV → 对齐表格
+    private static func executeCSVTable(arguments: [String: Any]) -> String {
+        guard let text = arguments["text"] as? String, !text.isEmpty else {
+            return "错误: 缺少 text 参数"
+        }
+        var delimiter = ","
+        if let d = arguments["delimiter"] as? String, !d.isEmpty {
+            delimiter = d == "\\t" ? "\t" : d
+        }
+        let hasHeader = (arguments["header"] as? Bool) ?? true
+
+        var rows: [[String]] = []
+        for rawLine in text.components(separatedBy: .newlines) {
+            let line = rawLine.trimmingCharacters(in: .whitespaces)
+            guard !line.isEmpty else { continue }
+            rows.append(parseCSVLine(line, delimiter: delimiter))
+        }
+        guard !rows.isEmpty else { return "(空表格)" }
+
+        // 计算每列最大宽度
+        let colCount = rows.map { $0.count }.max() ?? 0
+        var widths = [Int](repeating: 0, count: colCount)
+        for row in rows {
+            for (i, cell) in row.enumerated() where i < colCount {
+                widths[i] = max(widths[i], cell.count)
+            }
+        }
+        // 防止超宽列撑爆(限 40 字符)
+        for i in widths.indices { widths[i] = min(widths[i], 40) }
+
+        var out = ""
+        func fmt(_ row: [String]) -> String {
+            row.enumerated().map { i, cell in
+                let c = cell.count > 40 ? String(cell.prefix(40)) + "…" : cell
+                return c.padding(toLength: widths[i], withPad: " ", startingAt: 0)
+            }.joined(separator: " | ").trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        let bodyStart = hasHeader ? 1 : 0
+        if hasHeader, rows.count > 0 {
+            out += fmt(rows[0]) + "\n"
+            out += widths.map { String(repeating: "-", count: $0) }.joined(separator: "-+-") + "\n"
+        }
+        for row in rows.dropFirst(bodyStart) {
+            out += fmt(row) + "\n"
+        }
+        return out.trimmingCharacters(in: .newlines)
+    }
+
+    /// 简单 CSV 行解析(支持 "..." 内逗号)
+    private static func parseCSVLine(_ line: String, delimiter: String) -> [String] {
+        var fields: [String] = []
+        var current = ""
+        var inQuote = false
+        var i = line.startIndex
+        while i < line.endIndex {
+            let ch = line[i]
+            if inQuote {
+                if ch == "\"" {
+                    // "" 转义
+                    let next = line.index(after: i)
+                    if next < line.endIndex, line[next] == "\"" {
+                        current.append("\"")
+                        i = line.index(after: next)
+                        continue
+                    } else {
+                        inQuote = false
+                    }
+                } else {
+                    current.append(ch)
+                }
+            } else {
+                if ch == "\"" {
+                    inQuote = true
+                } else if delimiter.count == 1, String(ch) == delimiter {
+                    fields.append(current)
+                    current = ""
+                } else if delimiter.count == 1 {
+                    current.append(ch)
+                } else {
+                    // 多字符分隔符(罕见,按前缀匹配)
+                    if line[i...].hasPrefix(delimiter) {
+                        fields.append(current)
+                        current = ""
+                        i = line.index(i, offsetBy: delimiter.count, limitedBy: line.endIndex) ?? line.endIndex
+                        continue
+                    }
+                    current.append(ch)
+                }
+            }
+            i = line.index(after: i)
+        }
+        fields.append(current)
+        return fields
+    }
+
+    /// JWT 解码(不验签):header + payload 美化 + exp 解读
+    private static func executeJWTDecode(arguments: [String: Any]) -> String {
+        guard let token = arguments["token"] as? String, !token.isEmpty else {
+            return "错误: 缺少 token 参数"
+        }
+        let parts = token.split(separator: ".").map(String.init)
+        guard parts.count >= 2 else { return "错误: JWT 需含 header.payload 两段" }
+
+        func decodePart(_ s: String) -> String {
+            // base64url → base64
+            var b64 = s.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+            while b64.count % 4 != 0 { b64 += "=" }
+            guard let data = Data(base64Encoded: b64) else { return "(无法解码)" }
+            return String(data: data, encoding: .utf8) ?? "(非 UTF-8)"
+        }
+
+        func prettyJSON(_ s: String) -> String {
+            guard let d = s.data(using: .utf8),
+                  let obj = try? JSONSerialization.jsonObject(with: d),
+                  let pretty = try? JSONSerialization.data(withJSONObject: obj, options: [.prettyPrinted, .sortedKeys]),
+                  let str = String(data: pretty, encoding: .utf8) else { return s }
+            return str
+        }
+
+        var out = "=== Header ===\n" + prettyJSON(decodePart(parts[0])) + "\n\n=== Payload ===\n"
+        let payloadRaw = decodePart(parts[1])
+        let payloadPretty = prettyJSON(payloadRaw)
+        out += payloadPretty
+
+        // exp 解读
+        if let d = payloadRaw.data(using: .utf8),
+           let obj = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
+           let exp = obj["exp"] as? Double {
+            let date = Date(timeIntervalSince1970: exp)
+            let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd HH:mm:ss"; f.timeZone = .current
+            let expired = date < Date()
+            out += "\n\n=== 过期时间 ===\n\(f.string(from: date))(\(expired ? "已过期" : "未过期"))"
+        }
+        if parts.count == 3 {
+            out += "\n\n=== 签名 ===\n\(String(parts[2].prefix(40)))\(parts[2].count > 40 ? "…" : "")"
+        }
+        return out
     }
 }

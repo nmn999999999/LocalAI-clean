@@ -9,6 +9,14 @@ struct ChatView: View {
     @EnvironmentObject private var llmService: LLMService
     @EnvironmentObject private var agentService: AgentService
     @EnvironmentObject private var modelManager: ModelManager
+    @ObservedObject private var providerStore = ProviderStore.shared
+    @ObservedObject private var assistantStore = AssistantStore.shared
+    @ObservedObject private var ttsService = TTSService.shared
+    @ObservedObject private var asrService = ASRService.shared
+    @ObservedObject private var personaStore = PersonaStore.shared
+    @EnvironmentObject private var theme: LocalAIApp.ThemeObserver
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.accessibilityVoiceOverEnabled) private var voiceOverEnabled
 
     @State private var inputText = ""
     @State private var isAgentMode = false
@@ -27,25 +35,90 @@ struct ChatView: View {
     @State private var agentLastFlush = Date.distantPast
     @FocusState private var inputFocused: Bool
 
+    /// 工具授权弹窗：当 AgentService 解析到 requiresApproval=true 的工具时挂起等用户决策。
+    /// 阻断式 alert：等用户按"允许/拒绝"前，AgentService.run() 在 await bridge.requestApproval 阻塞。
+    @State private var pendingApproval: PendingApproval?
+
+    struct PendingApproval: Identifiable {
+        let id = UUID()
+        let call: ChatMessage.ToolCall
+        let continuation: CheckedContinuation<Bool, Never>
+    }
+
+    /// Agent 模式下整个 agent run() 周期共享同一个 assistant 气泡 id。
+    /// 第一次 beginIteration 创建新气泡，后续 iteration 复用同一 id → 内容连成一片；
+    /// 这样多轮工具调用 / 思考 / 最终答案都看起来是同一条 assistant 消息,
+    /// 视觉上不会"分裂"。run() 完成后清空。
+    @State private var currentAgentMessageID: UUID?
+
+    /// 联网搜索开关 / 消息编辑 / 朗读状态 / 语音输入
+    @State private var webSearchOn = false
+    @State private var editingMessage: ChatMessage?
+    @State private var editingContent = ""
+    @State private var showEditSheet = false
+    @State private var speakingMessageID: UUID?
+    @State private var voiceBaseText = ""
+    /// AI 自动标题任务（防并发重入）
+    @State private var titleTask: Task<Void, Never>?
+    /// 记忆自动提炼任务（防并发重入）
+    @State private var memoryExtractTask: Task<Void, Never>?
+
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                if showSearch {
-                    searchBar
+                // M3 修复:搜索迁移到系统 .searchable(见 messageList 上的修饰符),
+                // 这里只保留搜索结果 overlay(输入框由系统工具栏渲染)。
+                if showSearch && !searchResults.isEmpty {
+                    searchResultsList
                 }
                 messageList
+                    // 搜索:用系统 .searchable。⚠️ 经验(v0.3.20-22):
+                    // - 自定义按钮 toggle + isPresented 绑定 → "点开收不起"(toggle 与系统状态打架)
+                    // - .searchToolbarBehavior(.minimize) 的按钮状态机 → "点 x 收起又自动重开"
+                    // 稳定组合:自定义按钮只"单向打开"(showSearch = true),关闭完全交给
+                    // 系统"取消"按钮(系统把 isPresented 置 false);不用 minimize。
+                    .searchable(text: $searchText, isPresented: $showSearch, placement: .toolbar)
+                    .onChange(of: searchText) { _, newValue in
+                        // 防抖：停止输入 200ms 后再执行全量搜索，避免每个按键都扫描所有会话
+                        searchTask?.cancel()
+                        searchTask = Task {
+                            try? await Task.sleep(nanoseconds: 200_000_000)
+                            guard !Task.isCancelled else { return }
+                            searchResults = chatStore.search(query: newValue)
+                        }
+                    }
+                    // 搜索收起时清空状态(系统通过 isPresented 置 false)
+                    .onChange(of: showSearch) { _, isPresented in
+                        if !isPresented {
+                            searchText = ""
+                            searchResults = []
+                        }
+                    }
                 if llmService.isModelReady {
                     agentStepsBar
                 }
                 inputBar
             }
-            .background(Color(.systemGroupedBackground))
+            .background(theme.current.pageBackground(for: colorScheme))
             .navigationTitle(chatStore.currentOrNew.title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { toolbarContent }
             .sheet(isPresented: $showConversationList) {
                 ConversationListView()
                     .presentationDetents([.medium, .large])
+            }
+            .sheet(isPresented: $showEditSheet) {
+                editMessageSheet
+            }
+            .onChange(of: ttsService.isSpeaking) { _, speaking in
+                if !speaking { speakingMessageID = nil }
+            }
+            // 生成时保持屏幕常亮（keep screen on）
+            .onChange(of: isGenerating) { _, generating in
+                guard SettingsStorage.shared.settings.keepScreenOn else { return }
+                #if canImport(UIKit)
+                UIApplication.shared.isIdleTimerDisabled = generating
+                #endif
             }
             .alert("出错了", isPresented: .init(
                 get: { errorMessage != nil },
@@ -55,40 +128,80 @@ struct ChatView: View {
             } message: {
                 Text(errorMessage ?? "")
             }
+            .alert(
+                "需要执行「\(pendingApproval?.call.title ?? pendingApproval?.call.name ?? "工具")」吗?",
+                isPresented: .init(
+                    get: { pendingApproval != nil },
+                    set: { if !$0 {
+                        // 自动关闭（如返回上一级）= 拒绝，避免 AgentService 永久阻塞
+                        pendingApproval?.continuation.resume(returning: false)
+                        pendingApproval = nil
+                    } }
+                )
+            ) {
+                Button("拒绝", role: .destructive) {
+                    pendingApproval?.continuation.resume(returning: false)
+                    pendingApproval = nil
+                }
+                Button("允许") {
+                    pendingApproval?.continuation.resume(returning: true)
+                    pendingApproval = nil
+                }
+            } message: {
+                if let pending = pendingApproval {
+                    Text("此工具会运行真实操作（SSH / MCP 等），是否授权?\n\n参数:\n\(prettyArgumentsForApproval(pending.call.arguments))")
+                }
+            }
         }
+    }
+
+    /// 是否可发送：本地模型已加载 或 已配置云端 Provider
+    private var canChat: Bool {
+        llmService.isModelReady || providerStore.hasCloudSelection
     }
 
     // MARK: - 消息列表
 
     private var messageList: some View {
-        ScrollViewReader { proxy in
+        // 性能：snapshot 一次当前对话的 messages，外层所有引用都从此数组走，
+        // 避免 body 内部多次 chatStore.currentOrNew.messages 调用（重复重算 + 全 conversations 扫描）。
+        let msgs = chatStore.currentOrNew.messages
+        return ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 12) {
-                    if !llmService.isModelReady && chatStore.currentOrNew.messages.isEmpty {
+                    if !canChat && msgs.isEmpty {
                         emptyState
                     }
-                    ForEach(chatStore.currentOrNew.messages) { message in
-                        MessageBubble(message: message)
-                            .id(message.id.uuidString)
+                    ForEach(msgs) { message in
+                        MessageBubble(
+                            message: message,
+                            onRegenerate: message.role == .assistant ? { regenerate(from: message.id) } : nil,
+                            onEdit: message.role == .user ? { editMessage(message) } : nil,
+                            onDelete: { deleteMessage(message) },
+                            onSpeak: message.role == .assistant ? { speakMessage(message) } : nil,
+                            isSpeaking: speakingMessageID == message.id
+                        )
+                        .id(message.id.uuidString)
                     }
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
             }
-            .onChange(of: chatStore.currentOrNew.messages.count) { _, _ in
-                withAnimation(.snappy) {
-                    scrollToBottom(proxy)
+            // 性能：只在消息数变化（新消息发送/到达完成时）滚到底。流式 token 期间
+            // content 持续变化，但消息数没变，不再每 80ms 触发滚动副作用——后者是卡顿大头。
+            .onChange(of: msgs.count) { _, _ in
+                if let id = msgs.last?.id.uuidString {
+                    proxy.scrollTo(id, anchor: .bottom)
                 }
-            }
-            .onChange(of: chatStore.currentOrNew.messages.last?.content) { _, _ in
-                scrollToBottom(proxy)
             }
             .defaultScrollAnchor(.bottom)
             // 在消息列表上下滑即可收起键盘
             .scrollDismissesKeyboard(.interactively)
             // 点击消息区域任意空白处（含气泡间隙）收起键盘；
-            // simultaneousGesture 不阻挡气泡内按钮点击
+            // simultaneousGesture 不阻挡气泡内按钮点击；
+            // VoiceOver 开启时跳过，避免与逐条浏览手势冲突（REVIEW m5）
             .simultaneousGesture(TapGesture().onEnded {
+                guard !voiceOverEnabled else { return }
                 inputFocused = false
             })
         }
@@ -105,11 +218,13 @@ struct ChatView: View {
             Image(systemName: "sparkles.rectangle.stack")
                 .font(.system(size: 48))
                 .foregroundStyle(.tint)
-            Text(llmService.isModelReady ? "开始对话吧" : "还没有加载模型")
+            Text(canChat ? t("开始对话吧") : t("还没有加载模型"))
                 .font(.title3.weight(.semibold))
-            Text(llmService.isModelReady
-                 ? "在下方输入消息，或开启 Agent 模式使用工具"
-                 : "前往「模型」页下载或导入 GGUF 模型")
+            Text(canChat
+                 ? (providerStore.hasCloudSelection
+                    ? "当前云端: \(providerStore.selectionText)"
+                    : t("在下方输入消息，或开启 Agent 模式使用工具"))
+                 : t("前往「模型」页下载或导入 GGUF 模型"))
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -119,54 +234,19 @@ struct ChatView: View {
 
     // MARK: - 搜索栏
 
-    private var searchBar: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Image(systemName: "magnifyingglass")
-                    .foregroundStyle(.secondary)
-                TextField("搜索消息...", text: $searchText)
-                    .textFieldStyle(.plain)
-                    .onChange(of: searchText) { _, newValue in
-                        // 防抖：停止输入 200ms 后再执行全量搜索，避免每个按键都扫描所有会话
-                        searchTask?.cancel()
-                        searchTask = Task {
-                            try? await Task.sleep(nanoseconds: 200_000_000)
-                            guard !Task.isCancelled else { return }
-                            searchResults = chatStore.search(query: newValue)
-                        }
-                    }
-                if !searchText.isEmpty {
-                    Button {
-                        searchText = ""
-                        searchResults = []
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundStyle(.secondary)
-                    }
+    /// M3:系统 .searchable 渲染输入框;这里只在展开搜索且有结果时显示结果列表 overlay
+    private var searchResultsList: some View {
+        ScrollView {
+            LazyVStack(spacing: 8) {
+                ForEach(searchResults.prefix(20)) { result in
+                    searchResultRow(result)
                 }
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(Color(.systemBackground))
-            .cornerRadius(10)
             .padding(.horizontal, 14)
-            .padding(.top, 8)
-
-            if !searchResults.isEmpty {
-                ScrollView {
-                    LazyVStack(spacing: 8) {
-                        ForEach(searchResults.prefix(20)) { result in
-                            searchResultRow(result)
-                        }
-                    }
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 8)
-                }
-                .frame(maxHeight: 200)
-                .background(Color(.systemBackground))
-            }
+            .padding(.vertical, 8)
         }
-        .background(Color(.systemGroupedBackground))
+        .frame(maxHeight: 220)
+        .background(.ultraThinMaterial)
     }
 
     private func searchResultRow(_ result: ChatStore.SearchResult) -> some View {
@@ -200,7 +280,7 @@ struct ChatView: View {
         let start = max(0, range.location - 20)
         let end = min(nsText.length, range.location + range.length + 40)
         let excerpt = nsText.substring(with: NSRange(location: start, length: end - start))
-        
+
         var result = ""
         if start > 0 { result += "..." }
         result += excerpt
@@ -215,21 +295,24 @@ struct ChatView: View {
         let settings = SettingsStorage.shared.settings
         if settings.showToolCalls && !agentService.steps.isEmpty {
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    ForEach(agentService.steps) { step in
-                        HStack(spacing: 4) {
-                            Image(systemName: iconName(for: step.kind))
-                                .font(.caption2)
-                            Text(step.detail)
-                                .lineLimit(1)
-                                .font(.caption)
+                // M2 修复:多玻璃 chips 用 GlassEffectContainer 统一包裹
+                GlassEffectContainer(spacing: 8) {
+                    HStack(spacing: 8) {
+                        ForEach(agentService.steps) { step in
+                            HStack(spacing: 4) {
+                                Image(systemName: iconName(for: step.kind))
+                                    .font(.caption2)
+                                Text(step.detail)
+                                    .lineLimit(1)
+                                    .font(.caption)
+                            }
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .glassEffect(.regular, in: .capsule)
                         }
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 5)
-                        .glassEffect(.regular, in: .capsule)
                     }
+                    .padding(.horizontal, 14)
                 }
-                .padding(.horizontal, 14)
             }
             .padding(.vertical, 6)
         }
@@ -244,44 +327,108 @@ struct ChatView: View {
         }
     }
 
-    // MARK: - 输入栏（液态玻璃）
+    // MARK: - 输入栏（液态玻璃 + iOS 26 苹果相机风格可展开工具岛）
+    @State private var showTools = false
 
     private var inputBar: some View {
-        GlassEffectContainer(spacing: 10) {
-            HStack(alignment: .bottom, spacing: 10) {
-                PhotosPicker(
-                    selection: $selectedItems,
-                    maxSelectionCount: 3,
-                    matching: .images
-                ) {
-                    Image(systemName: "photo.on.rectangle.angled")
+        VStack(spacing: 6) {
+            // 可展开的工具岛（默认折叠，展开后位于主输入栏上方，GlassEffect 同一容器保持视觉连贯）
+            if showTools {
+                // M2 修复(Apple 官方文档 Best Practices #1):多玻璃视图必须用
+                // GlassEffectContainer 包裹以获得性能和 morphing 能力。
+                GlassEffectContainer(spacing: 10) {
+                    HStack(spacing: 10) {
+                    PhotosPicker(
+                        selection: $selectedItems,
+                        maxSelectionCount: 3,
+                        matching: .images
+                    ) {
+                        Image(systemName: "photo.on.rectangle.angled")
+                            .accessibilityLabel(t("添加图片"))
+                    }
+                    .buttonStyle(.glass)
+                    .frame(width: 40, height: 40)
+                    .opacity(canChat ? 1 : 0.35)
+
+                    Button {
+                        withAnimation(.bouncy) { isAgentMode.toggle() }
+                    } label: {
+                        Image(systemName: isAgentMode ? "wand.and.stars" : "terminal")
+                            .symbolEffect(.bounce, value: isAgentMode)
+                            .accessibilityLabel(t("Agent 模式"))
+                    }
+                    .buttonStyle(.glass)
+                    .frame(width: 40, height: 40)
+                    .tint(isAgentMode ? .orange : nil)
+                    .opacity(llmService.isModelReady ? 1 : 0.35)
+
+                    if providerStore.hasCloudSelection {
+                        Button {
+                            withAnimation(.bouncy) { webSearchOn.toggle() }
+                        } label: {
+                            Image(systemName: webSearchOn ? "globe.asia.australia.fill" : "globe.asia.australia")
+                                .symbolEffect(.bounce, value: webSearchOn)
+                                .accessibilityLabel(t("联网搜索"))
+                        }
+                        .buttonStyle(.glass)
+                        .frame(width: 40, height: 40)
+                        .tint(webSearchOn ? .blue : nil)
+                    }
+
+                    Button {
+                        toggleVoiceInput()
+                    } label: {
+                        Image(systemName: asrService.isListening ? "mic.fill" : "mic")
+                            .symbolEffect(.pulse, isActive: asrService.isListening)
+                            .accessibilityLabel(t("语音输入"))
+                    }
+                    .buttonStyle(.glass)
+                    .frame(width: 40, height: 40)
+                    .tint(asrService.isListening ? .red : nil)
+
+                    Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.top, 8)
                 }
-                .buttonStyle(.glass)
-                .opacity(llmService.isModelReady ? 1 : 0.35)
-
-                Button {
-                    withAnimation(.bouncy) { isAgentMode.toggle() }
-                } label: {
-                    Image(systemName: isAgentMode ? "wand.and.stars" : "terminal")
-                        .symbolEffect(.bounce, value: isAgentMode)
-                }
-                .buttonStyle(.glass)
-                .tint(isAgentMode ? .orange : nil)
-                .opacity(llmService.isModelReady ? 1 : 0.35)
-
-                TextField("输入消息…", text: $inputText, axis: .vertical)
-                    .lineLimit(1...5)
-                    .textFieldStyle(.plain)
-                    .focused($inputFocused)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 10)
-                    .glassEffect(.regular, in: .capsule)
-
-                sendButton
+                .transition(.move(edge: .bottom).combined(with: .opacity))
             }
-            .padding(.horizontal, 14)
-            .padding(.top, 8)
-            .padding(.bottom, 4)
+
+            GlassEffectContainer(spacing: 12) {
+                HStack(alignment: .bottom, spacing: 10) {
+                    // iOS 26 苹果相机风格：主行只有 [+] / [输入] / [发送] 三个元素
+                    Button {
+                        withAnimation(.snappy) { showTools.toggle() }
+                    } label: {
+                        Image(systemName: showTools ? "xmark" : "plus")
+                            .symbolEffect(.bounce, value: showTools)
+                            .frame(width: 20, height: 20)
+                            .accessibilityLabel(showTools ? t("收起工具") : t("展开工具"))
+                    }
+                    .buttonStyle(.glass)
+                    .frame(width: 44, height: 44)
+
+                    TextField(t("输入消息…"), text: $inputText, axis: .vertical)
+                        .lineLimit(1...5)
+                        .textFieldStyle(.plain)
+                        .focused($inputFocused)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                        .frame(minHeight: 44)
+                        // ⚠️ 粘连修复(v0.3.22,真机验证):iOS 26.1 上 GlassEffectContainer 内
+                        // .glassEffect 输入框 + .glassProminent 发送键必然视觉合并,Apple 文档的
+                        // spacing 语义在该组合下无效(v0.3.10/v0.3.20 两次证实)。恢复 v0.3.12
+                        // 真机验证过的 Material 方案:材质与左右玻璃按钮不同层,天然独立不粘连。
+                        .background(.regularMaterial, in: .rect(cornerRadius: 22))
+
+                    sendButton
+                    .frame(width: 44, height: 44)
+                    .padding(.leading, 2) // 与输入框之间再多 2pt 视觉呼吸空间
+                }
+                .padding(.horizontal, 14)
+                .padding(.top, 8)
+                .padding(.bottom, 8)
+            }
         }
         .onChange(of: selectedItems) { _, items in
             Task { await loadAttachments(items) }
@@ -300,6 +447,7 @@ struct ChatView: View {
                   ? "stop.circle.fill"
                   : (canSend ? "arrow.up.circle.fill" : "arrow.up.circle"))
                 .font(.system(size: 26))
+                .accessibilityLabel(isGenerating ? t("停止生成") : t("发送消息"))
         }
         .buttonStyle(.glassProminent)
         .disabled(!canSend && !isGenerating)
@@ -310,13 +458,30 @@ struct ChatView: View {
         generationTask = nil
     }
 
+    // MARK: - 语音输入（ASR）
+
+    private func toggleVoiceInput() {
+        if asrService.isListening {
+            asrService.stop()
+            return
+        }
+        voiceBaseText = inputText
+        asrService.onPartial = { text in
+            inputText = voiceBaseText.isEmpty ? text : voiceBaseText + " " + text
+        }
+        asrService.onFinal = { text in
+            inputText = voiceBaseText.isEmpty ? text : voiceBaseText + " " + text
+        }
+        asrService.start()
+    }
+
     private var canSend: Bool {
         let hasText = !inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let hasImage = !attachments.isEmpty
-        return llmService.isModelReady && (hasText || hasImage) && !isGenerating
+        return canChat && (hasText || hasImage) && !isGenerating
     }
 
-    // MARK: - 工具栏
+    // MARK: - 工具栏（模型选择 / 助手选择 / 搜索 / 新对话）
 
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
@@ -325,44 +490,94 @@ struct ChatView: View {
                 showConversationList = true
             } label: {
                 Image(systemName: "sidebar.left")
+                    .accessibilityLabel(t("对话列表"))
             }
         }
         ToolbarItemGroup(placement: .topBarTrailing) {
-            Button {
-                withAnimation {
-                    showSearch.toggle()
-                    if !showSearch {
-                        searchText = ""
-                        searchResults = []
-                    }
-                }
-            } label: {
-                Image(systemName: showSearch ? "magnifyingglass" : "magnifyingglass")
-                    .symbolEffect(.bounce, value: showSearch)
-            }
-            
+            // 助手选择
             Menu {
-                ForEach(modelManager.downloadedModels) { model in
+                ForEach(assistantStore.assistants) { assistant in
                     Button {
-                        Task { await loadModel(model) }
+                        assistantStore.currentAssistantID = assistant.id
                     } label: {
-                        Label(model.name, systemImage:
-                            llmService.loadedModelName == model.name ? "checkmark" : "cpu")
+                        Label("\(assistant.emoji) \(assistant.name)", systemImage:
+                            assistantStore.currentAssistantID == assistant.id ? "checkmark" : "person")
                     }
                 }
             } label: {
-                Label(
-                    llmService.loadedModelName ?? "选择模型",
-                    systemImage: "cpu"
-                )
-                .lineLimit(1)
+                Image(systemName: assistantStore.current?.emoji == nil ? "person.crop.circle" : "person.crop.circle.badge.checkmark")
+                    .accessibilityLabel(t("选择助手"))
             }
+
+            // 搜索入口按钮:只"打开"(showSearch = true),关闭由系统"取消"完成。
+            // 不要 toggle —— toggle 与系统 isPresented 双向绑定打架(v0.3.20 教训)。
+            Button {
+                showSearch = true
+            } label: {
+                Image(systemName: "magnifyingglass")
+                    .accessibilityLabel(t("搜索"))
+            }
+
+            // 模型选择（云端 Provider + 本地 GGUF）
+            Menu {
+                let cloudProviders = providerStore.providers.filter(\.enabled)
+                if !cloudProviders.isEmpty {
+                    Section(t("云端模型")) {
+                        ForEach(cloudProviders) { provider in
+                            if provider.models.isEmpty {
+                                Button {
+                                    providerStore.select(providerID: provider.id, model: "")
+                                } label: {
+                                    Label(provider.name, systemImage: "server.rack")
+                                }
+                            }
+                            ForEach(provider.models, id: \.self) { model in
+                                Button {
+                                    providerStore.select(providerID: provider.id, model: model)
+                                } label: {
+                                    Label("\(provider.name) · \(model)", systemImage:
+                                        (providerStore.currentProviderID == provider.id && providerStore.currentModel == model)
+                                        ? "checkmark" : "cloud")
+                                }
+                            }
+                        }
+                    }
+                }
+                if !modelManager.downloadedModels.isEmpty {
+                    Section(t("本地模型")) {
+                        ForEach(modelManager.downloadedModels) { model in
+                            Button {
+                                Task { await loadModel(model) }
+                            } label: {
+                                Label(model.name, systemImage:
+                                    llmService.loadedModelName == model.name ? "checkmark" : "cpu")
+                            }
+                        }
+                    }
+                }
+            } label: {
+                Label(modelMenuTitle, systemImage: modelMenuIcon)
+                    .lineLimit(1)
+            }
+
             Button {
                 chatStore.createNew()
             } label: {
                 Image(systemName: "square.and.pencil")
+                    .accessibilityLabel(t("新建对话"))
             }
         }
+    }
+
+    private var modelMenuTitle: String {
+        if providerStore.hasCloudSelection {
+            return providerStore.selectionText
+        }
+        return llmService.loadedModelName ?? t("选择模型")
+    }
+
+    private var modelMenuIcon: String {
+        providerStore.hasCloudSelection ? "cloud" : "cpu"
     }
 
     // MARK: - 动作
@@ -379,49 +594,56 @@ struct ChatView: View {
     }
 
     private func sendMessage() {
-        let text = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let rawText = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard canSend else { return }
 
+        let settings = SettingsStorage.shared.settings
         let images = attachments
         inputText = ""
         attachments = []
         selectedItems = []
         inputFocused = false
 
+        // 提示词变量解析（Prompt Variables）
+        let modelName = providerStore.hasCloudSelection ? providerStore.currentModel : (llmService.loadedModelName ?? "")
+        let providerName = providerStore.currentProvider?.name ?? ""
+        let text = PromptVariableResolver.resolve(rawText, model: modelName, providerName: providerName)
+
         var conv = chatStore.currentOrNew
         conv.messages.append(ChatMessage(role: .user, content: text, images: images))
         conv.updateTitle()
-        conv.modelName = llmService.loadedModelName
-
-        let settings = SettingsStorage.shared.settings
-
-        let history: [ChatMessage]
-        let assistantMsg: ChatMessage?
-        if isAgentMode {
-            history = Array(conv.messages)
-            assistantMsg = nil
-        } else {
-            let m = ChatMessage(role: .assistant, content: "", isStreaming: true)
-            conv.messages.append(m)
-            assistantMsg = m
-            history = conv.messages.filter { $0.id != m.id }
-        }
+        conv.modelName = providerStore.hasCloudSelection ? providerStore.selectionText : llmService.loadedModelName
         chatStore.upsert(conv)
 
-        isGenerating = true
-        generationTask = Task {
-            defer {
-                isGenerating = false
-                generationTask = nil
-            }
+        let effectiveSettings = effectiveSettings(from: settings, modelName: modelName, providerName: providerName)
 
-            if isAgentMode {
+        if isAgentMode {
+            // Agent 模式：人设提示词（助手/变量/人格）显式放入历史首条，
+            // 避免被工具指令 system 消息顶掉（withToolInstructions 会追加到第一条 system）
+            var agentHistory = Array(conv.messages)
+            if !effectiveSettings.systemPrompt.isEmpty {
+                agentHistory.insert(ChatMessage(role: .system, content: effectiveSettings.systemPrompt), at: 0)
+            }
+            let history = agentHistory
+            isGenerating = true
+            generationTask = Task {
+                defer {
+                    isGenerating = false
+                    generationTask = nil
+                }
                 let bridge = AgentService.AgentDisplayBridge(
                     beginIteration: {
+                        // 复用气泡：如果当前 agent run() 已有 bubble,直接复用 id;
+                        // 否则首次创建。这样多轮思考 + 工具调用 + 最终答案
+                        // 都渲染在同一个 assistant 气泡内,不分裂成多个 9:30 卡。
+                        if let existing = currentAgentMessageID {
+                            return existing
+                        }
                         let m = ChatMessage(role: .assistant, content: "", isStreaming: true, isAgentRound: true)
                         var c = chatStore.currentOrNew
                         c.messages.append(m)
                         chatStore.upsert(c)
+                        currentAgentMessageID = m.id
                         return m.id
                     },
                     appendToken: { id, token in
@@ -432,22 +654,146 @@ struct ChatView: View {
                     },
                     endIteration: { id in
                         finalizeMessage(id: id)
+                    },
+                    requestApproval: { _, call in
+                        // 阻塞等用户在 chat 里点"允许/拒绝"。@MainActor self 才能写 @State。
+                        await withCheckedContinuation { (cont: CheckedContinuation<Bool, Never>) in
+                            // setState 派发到 main；cont 只在用户点按钮时 resume 一次
+                            pendingApproval = PendingApproval(call: call, continuation: cont)
+                        }
                     }
                 )
-                _ = await agentService.run(
+                let bubbleId = currentAgentMessageID  // 备份气泡 id,run() 之后会用
+                let result = await agentService.run(
                     history: history,
-                    settings: settings,
+                    settings: effectiveSettings,
+                    toolsEnabledTools: BuiltInTools.allTools + MCPService.shared.toolDefinitions,
                     llm: llmService,
                     bridge: bridge
                 )
-                return
+                // run() 退出后清空共享气泡 id,下次发送/agent 时重新创建
+                currentAgentMessageID = nil
+
+                // 模型兜底：AgentService 可能在「think 块内回答」场景下,用 stripThinkTagsKeepThink
+                // 把 final answer 从 raw 里抠出来当 return content。如果 bubble 内的
+                // visibleContent(剥离 think 后)为空,把最终答案回填到 message.content 末尾
+                // —— 否则用户看到的 assistant 只有 thinking 块而没有最终答案。
+                if !result.content.isEmpty, let bubbleId {
+                    var conv = chatStore.currentOrNew
+                    if let idx = conv.messages.firstIndex(where: { $0.id == bubbleId }) {
+                        let visible = AgentService.stripThinkTags(conv.messages[idx].content)
+                            .trimmingCharacters(in: .whitespacesAndNewlines)
+                        if visible.isEmpty {
+                            // 当前 bubble 内容只含 think 块 + tool call chip,没有 user-facing answer。
+                            // 把 AgentService 兜底提取的最终答案回填到 message.content 末尾,
+                            // 这样 MessageBubble 的 visibleContent(剥离 think 之后)就显示最终答案。
+                            conv.messages[idx].content = conv.messages[idx].content + "\n\n" + result.content
+                            chatStore.upsert(conv)
+                        }
+                    }
+                }
+
+                if !Task.isCancelled {
+                    maybeAutoTitle()
+                    maybeAutoExtractMemory()
+                }
+            }
+            return
+        }
+
+        startGeneration(history: Array(conv.messages), settings: effectiveSettings, images: images.compactMap { $0.cgImage })
+    }
+
+    /// 解析助手绑定 + 提示词变量 + 人格注入 + 提示词策略 → 有效设置
+    private func effectiveSettings(from settings: ModelSettings, modelName: String, providerName: String) -> ModelSettings {
+        var effective = settings
+        let assistant = assistantStore.current
+        let prompt = (assistant?.systemPrompt.isEmpty == false ? assistant!.systemPrompt : settings.systemPrompt)
+        effective.systemPrompt = PromptVariableResolver.resolve(
+            prompt,
+            model: modelName,
+            providerName: providerName
+        )
+        // 世界观 / 记忆 / 指令注入（World Book / Memory / Instruction Injection）
+        let persona = personaStore.injectionText(settings: effective)
+        if !persona.isEmpty {
+            effective.systemPrompt = [effective.systemPrompt, persona]
+                .filter { !$0.isEmpty }
+                .joined(separator: "\n\n")
+        }
+        // 提示词策略：按模型能力自动适配（本地小模型简洁 / 云端旗舰专业）
+        let resolved = resolveEngine()
+        let useCloud = resolved.provider != nil
+        let strategyModel = useCloud ? resolved.model : (llmService.loadedModelName ?? "")
+        let strategy = PromptStrategyResolver.detect(
+            isCloud: useCloud,
+            modelName: strategyModel,
+            forced: PromptStrategy(rawValue: settings.promptStrategy) ?? .auto
+        )
+        let template = PromptStrategyResolver.template(
+            for: strategy,
+            language: effective.language,
+            assistantName: assistant?.name ?? "AI"
+        )
+        if !template.isEmpty {
+            effective.systemPrompt = [effective.systemPrompt, template]
+                .filter { !$0.isEmpty }
+                .joined(separator: "\n\n")
+        }
+        if let temp = assistant?.temperature {
+            effective.temperature = temp
+        }
+        return effective
+    }
+
+    /// 核心生成流程：创建 assistant 气泡并流式渲染（云 / 本地自动路由）
+    private func startGeneration(history: [ChatMessage], settings: ModelSettings, images: [CGImage]) {
+        isGenerating = true
+        generationTask = Task {
+            defer {
+                isGenerating = false
+                generationTask = nil
             }
 
-            guard let assistantMsg else { return }
+            let assistantMsg = ChatMessage(role: .assistant, content: "", isStreaming: true)
+            var conv = chatStore.currentOrNew
+            conv.messages.append(assistantMsg)
+            chatStore.upsert(conv)
+
+            let resolved = resolveEngine()
             var full = ""
             var lastFlush = Date.distantPast
+            let genStart = Date()
+
             do {
-                let stream = llmService.streamChat(history: history, settings: settings, images: images.compactMap { $0.cgImage })
+                let stream: AsyncThrowingStream<String, Error>
+
+                // 联网搜索结果注入（云/本地通用，Web Search）
+                let lastUser = history.last(where: { $0.role == .user })?.content ?? ""
+                let searchCtx = await webSearchContext(query: lastUser, settings: settings)
+
+                if let provider = resolved.provider, !resolved.model.isEmpty {
+                    // 云端
+                    var cloudMessages = llmService.makeCloudMessages(history, settings: settings)
+                    if let ctx = searchCtx {
+                        cloudMessages.insert(CloudMessage(role: .system, content: ctx), at: 0)
+                    }
+                    stream = CloudChatClient.stream(
+                        provider: provider,
+                        model: resolved.model,
+                        messages: cloudMessages,
+                        temperature: resolved.temp ?? settings.temperature,
+                        maxTokens: settings.apiMaxTokens
+                    )
+                } else {
+                    // 本地引擎（或旧 API 模式）
+                    var localHistory = history
+                    if let ctx = searchCtx {
+                        localHistory.insert(ChatMessage(role: .system, content: ctx), at: 0)
+                    }
+                    stream = llmService.streamChat(history: localHistory, settings: settings, images: images)
+                }
+
                 for try await token in stream {
                     full += token
                     // 按时间节流刷新 UI（~80ms），避免高速 token 流频繁触发全量重渲染
@@ -457,14 +803,109 @@ struct ChatView: View {
                         lastFlush = now
                     }
                 }
-                updateAssistant(id: assistantMsg.id, content: full, streaming: false)
+                // 生成速度反馈（Metal/CPU 加速效果可见）
+                let elapsed = Date().timeIntervalSince(genStart)
+                let approxTokens = Int(Double(full.count) * 0.6)
+                let speedText: String? = (elapsed >= 0.5 && approxTokens > 0)
+                    ? String(format: "⚡ %.1f tok/s", Double(approxTokens) / elapsed)
+                    : nil
+                updateAssistant(id: assistantMsg.id, content: full, streaming: false, speedText: speedText)
             } catch {
+                if full.isEmpty {
+                    full = "⚠️ \(error.localizedDescription)"
+                }
                 updateAssistant(id: assistantMsg.id, content: full, streaming: false)
                 if !Task.isCancelled {
                     errorMessage = error.localizedDescription
                 }
             }
+            // 生成结束后为新对话自动生成标题（不抢引擎，失败静默；用户取消则不触发）
+            if !Task.isCancelled {
+                maybeAutoTitle()
+                maybeAutoExtractMemory()
+            }
         }
+    }
+
+    // MARK: - AI 自动标题
+
+    private func maybeAutoTitle() {
+        guard titleTask == nil else { return }
+        let conv = chatStore.currentOrNew
+        guard conv.title == "新对话", conv.messages.count >= 3, canChat else { return }
+
+        let userMessages = conv.messages.filter { $0.role == .user }
+        let first = userMessages.first?.content ?? ""
+        let second = userMessages.dropFirst().first?.content ?? ""
+        let instruction = "根据这段对话，用不超过 12 个字概括主题作为标题。只输出标题本身，不要引号、标点或解释。"
+        let history = [
+            ChatMessage(role: .user, content: "\(instruction)\n\n第一句：\(first.prefix(80))\n第二句：\(second.prefix(80))")
+        ]
+        // 精简设置：标题生成不带系统提示词/人格，低温确定性输出，控制成本
+        var titleSettings = SettingsStorage.shared.settings
+        titleSettings.systemPrompt = ""
+        titleSettings.temperature = 0.3
+        titleTask = Task {
+            defer { titleTask = nil }
+            do {
+                let text = try await llmService.complete(messages: history, settings: titleSettings)
+                let cleaned = Self.cleanTitle(text)
+                guard !cleaned.isEmpty else { return }
+                if var c = chatStore.conversation(id: conv.id), c.title == "新对话" {
+                    c.title = cleaned
+                    chatStore.upsert(c)
+                }
+            } catch {
+                // 失败静默，不打扰用户
+            }
+        }
+    }
+
+    /// 对话结束后自动提炼长期记忆（按设置开关；防并发重入）。
+    /// 与自动标题同理：低优先级后台 pipeline，失败静默不打扰用户。
+    private func maybeAutoExtractMemory() {
+        guard memoryExtractTask == nil else { return }
+        guard SettingsStorage.shared.settings.autoExtractMemory else { return }
+        let conv = chatStore.currentOrNew
+        let userCount = conv.messages.filter { $0.role == .user }.count
+        guard userCount >= 3, canChat else { return }
+        let messages = conv.messages
+        memoryExtractTask = Task {
+            defer { memoryExtractTask = nil }
+            _ = await personaStore.extractMemories(from: messages, llm: llmService)
+        }
+    }
+
+    /// 清洗模型输出的标题：去引号/换行/前后缀，限长
+    static func cleanTitle(_ text: String) -> String {
+        var t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        for token in ["\"", "「", "」", "《", "》", "标题：", "标题:", "'", "``", "```"] {
+            t = t.replacingOccurrences(of: token, with: "")
+        }
+        let firstLine = t.split(separator: "\n").first.map(String.init) ?? t
+        return String(firstLine.trimmingCharacters(in: .whitespacesAndNewlines).prefix(20))
+    }
+
+    /// 解析生效引擎：助手绑定优先，其次当前云端选择；否则本地
+    private func resolveEngine() -> (provider: ChatProvider?, model: String, temp: Double?) {
+        let assistant = assistantStore.current
+        if let pid = assistant?.providerID,
+           let p = providerStore.provider(id: pid),
+           p.enabled, p.hasKey {
+            let m = (assistant?.model?.isEmpty == false ? assistant!.model! : p.models.first) ?? ""
+            return (p, m, assistant?.temperature)
+        }
+        if let p = providerStore.currentProvider, p.hasKey, !providerStore.currentModel.isEmpty {
+            return (p, providerStore.currentModel, assistant?.temperature)
+        }
+        return (nil, "", nil)
+    }
+
+    /// 联网搜索上下文注入（Web Search 工具）
+    private func webSearchContext(query: String, settings: ModelSettings) async -> String? {
+        guard !query.isEmpty, settings.cloudWebSearch || webSearchOn else { return nil }
+        let result = await SearchService.search(query: query, settings: settings)
+        return "以下是针对「\(query)」的联网搜索结果，请基于这些信息回答：\n\n\(result)"
     }
 
     /// 原位更新流式 assistant 消息（批量更新减少触发频率）。
@@ -472,20 +913,105 @@ struct ChatView: View {
         id: UUID,
         content: String,
         toolCalls: [ChatMessage.ToolCall] = [],
-        streaming: Bool = true
+        streaming: Bool = true,
+        speedText: String? = nil
     ) {
         var conv = chatStore.currentOrNew
         guard let idx = conv.messages.firstIndex(where: { $0.id == id }) else { return }
         conv.messages[idx].content = content
         conv.messages[idx].toolCalls = toolCalls
         conv.messages[idx].isStreaming = streaming
+        if speedText != nil {
+            conv.messages[idx].speedText = speedText
+        }
         chatStore.upsert(conv)
     }
 
-    private func appendAssistant(content: String, toolCalls: [ChatMessage.ToolCall]) {
+    // MARK: - 消息操作（重新生成 / 编辑 / 删除 / 朗读）
+
+    private func regenerate(from assistantID: UUID) {
         var conv = chatStore.currentOrNew
-        conv.messages.append(ChatMessage(role: .assistant, content: content, toolCalls: toolCalls))
+        guard let idx = conv.messages.firstIndex(where: { $0.id == assistantID }) else { return }
+        guard let userMsg = conv.messages[..<idx].last(where: { $0.role == .user }) else { return }
+
+        conv.messages.removeSubrange(idx...)
         chatStore.upsert(conv)
+
+        let settings = SettingsStorage.shared.settings
+        let modelName = providerStore.hasCloudSelection ? providerStore.currentModel : (llmService.loadedModelName ?? "")
+        let providerName = providerStore.currentProvider?.name ?? ""
+        let effective = effectiveSettings(from: settings, modelName: modelName, providerName: providerName)
+
+        startGeneration(history: Array(conv.messages), settings: effective, images: userMsg.images.compactMap { $0.cgImage })
+    }
+
+    private func editMessage(_ message: ChatMessage) {
+        editingMessage = message
+        editingContent = message.content
+        showEditSheet = true
+    }
+
+    private func saveEditedMessage() {
+        guard let msg = editingMessage else { return }
+        var conv = chatStore.currentOrNew
+        guard let idx = conv.messages.firstIndex(where: { $0.id == msg.id }) else { return }
+
+        conv.messages[idx].content = editingContent
+        // 删除该消息之后的所有内容，再从编辑点重新生成
+        if idx + 1 < conv.messages.count {
+            conv.messages.removeSubrange((idx + 1)...)
+        }
+        chatStore.upsert(conv)
+
+        let settings = SettingsStorage.shared.settings
+        let modelName = providerStore.hasCloudSelection ? providerStore.currentModel : (llmService.loadedModelName ?? "")
+        let providerName = providerStore.currentProvider?.name ?? ""
+        let effective = effectiveSettings(from: settings, modelName: modelName, providerName: providerName)
+
+        startGeneration(history: Array(conv.messages), settings: effective, images: msg.images.compactMap { $0.cgImage })
+    }
+
+    private func deleteMessage(_ message: ChatMessage) {
+        var conv = chatStore.currentOrNew
+        conv.messages.removeAll { $0.id == message.id }
+        chatStore.upsert(conv)
+    }
+
+    private func speakMessage(_ message: ChatMessage) {
+        if ttsService.isSpeaking {
+            ttsService.stop()
+            speakingMessageID = nil
+            return
+        }
+        let text = message.visibleContent
+        guard !text.isEmpty else { return }
+        speakingMessageID = message.id
+        ttsService.speak(text)
+    }
+
+    private var editMessageSheet: some View {
+        NavigationStack {
+            VStack {
+                TextEditor(text: $editingContent)
+                    .padding(8)
+                    .frame(minHeight: 200)
+                    .background(Color(.secondarySystemBackground), in: .rect(cornerRadius: 12))
+                    .padding()
+            }
+            .navigationTitle(t("编辑消息"))
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button(t("取消")) { showEditSheet = false }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(t("保存")) {
+                        showEditSheet = false
+                        saveEditedMessage()
+                    }
+                }
+            }
+        }
     }
 
     // MARK: - Agent 流式辅助（逐轮气泡）
@@ -509,11 +1035,29 @@ struct ChatView: View {
         chatStore.upsert(conv)
     }
 
+    /// 格式化工具参数 JSON 用于弹窗展示：缩进排版，截断到 300 字。
+    private func prettyArgumentsForApproval(_ json: String) -> String {
+        guard let data = json.data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: data),
+              let pretty = try? JSONSerialization.data(withJSONObject: obj, options: [.prettyPrinted]),
+              let str = String(data: pretty, encoding: .utf8)
+        else { return json }
+        let trimmed = str.count > 300 ? String(str.prefix(300)) + "\n…" : str
+        return trimmed
+    }
+
     /// 把解析出的工具调用挂到指定气泡（气泡内以可展开 chip 展示参数与结果）。
+    /// 同 record.id 二次调用为「覆盖更新」（状态机变更）：避免 .running → .complete 出现两份。
     private func attachToolCallToMessage(id: UUID, call: ChatMessage.ToolCall) {
         var conv = chatStore.currentOrNew
         guard let idx = conv.messages.firstIndex(where: { $0.id == id }) else { return }
-        conv.messages[idx].toolCalls.append(call)
+        var calls = conv.messages[idx].toolCalls
+        if let existing = calls.firstIndex(where: { $0.id == call.id }) {
+            calls[existing] = call
+        } else {
+            calls.append(call)
+        }
+        conv.messages[idx].toolCalls = calls
         chatStore.upsert(conv)
     }
 

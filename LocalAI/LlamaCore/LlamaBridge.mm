@@ -116,7 +116,8 @@ bool llama_bridge_load_model(llama_bridge * b,
                              int n_ctx,
                              int n_gpu_layers,
                              int n_threads,
-                             int load_mode) {
+                             int load_mode,
+                             int kv_cache_quant) {
     if (!b) return false;
     b->n_threads = n_threads > 0 ? n_threads : 4;
     llama_log_set(bridge_log_callback, b);
@@ -152,6 +153,14 @@ bool llama_bridge_load_model(llama_bridge * b,
     cparams.n_threads_batch = b->n_threads;
     // Metal 后端上 Flash Attention 的稳定性问题：先关闭，换取可靠解码
     cparams.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_DISABLED;
+    // KV cache 量化：Q8_0 使 K-cache 内存减半。
+    // 重要约束:llama.cpp 要求 "quantized V cache 必须 flash_attn 开启"；
+    // 当前 flash_attn 已关闭,所以 V cache 必须保持 F16,只对 K cache 量化。
+    // 否则启动时直接报:`llama_init_from_model: quantized V cache requires flash_attn to be enabled`
+    if (kv_cache_quant) {
+        cparams.type_k = GGML_TYPE_Q8_0;
+        cparams.type_v = GGML_TYPE_F16;  // V cache 保持 F16(满足无 flash_attn 的约束)
+    }
     b->ctx = llama_init_from_model(b->model, cparams);
     if (!b->ctx) {
         set_error(b, with_log(b, "无法初始化上下文"));

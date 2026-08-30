@@ -25,6 +25,19 @@ struct AIModelInfo: Identifiable, Hashable, Codable {
         URL(string: "https://hf-mirror.com/\(repo)/resolve/main/\(fileName)")
     }
 
+    /// 估算运行所需内存（GB）：≈ 文件大小 ×1.4 + 1GB（KV 缓存 + 激活 + 系统开销），向上取偶。
+    /// 用于模型页「建议内存」提示，避免下完装不上的尴尬。
+    var estimatedRAMDescription: String {
+        let pattern = #"~?([\d.]+)\s*GB"#
+        guard let regex = try? NSRegularExpression(pattern: pattern),
+              let match = regex.firstMatch(in: sizeDescription, range: NSRange(location: 0, length: (sizeDescription as NSString).length)),
+              let range = Range(match.range(at: 1), in: sizeDescription),
+              let fileGB = Double(sizeDescription[range])
+        else { return "建议 4GB 内存" }
+        let ram = max(4.0, ((fileGB * 1.4 + 1.0) / 2.0).rounded(.up) * 2.0)
+        return "建议 \(Int(ram))GB 内存"
+    }
+
     static let catalog: [AIModelInfo] = [
         AIModelInfo(
             id: "qwen3-0.6b-q4km",
@@ -125,11 +138,46 @@ struct AIModelInfo: Identifiable, Hashable, Codable {
             supportsMultimodal: false,
             supportsToolCalling: true
         ),
+        // 参考 FlowDown 本地模型家族（Qwen3 / DeepSeek）补充的端侧 GGUF：
+        // 2026 实测「手机最佳点 = 2-4GB Q4」；中文首选 Qwen3-4B，推理首选 R1-Distill-1.5B
+        AIModelInfo(
+            id: "qwen3-4b-2507-q4km",
+            name: "Qwen3 4B (2507)",
+            repo: "unsloth/Qwen3-4B-Instruct-2507-GGUF",
+            fileName: "Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
+            sizeDescription: "~2.3 GB",
+            description: "阿里新一代端侧「瑞士军刀」：中文最强（5星）、工具调用强、非推理输出干净不裹思考块，适合日常中文与 Agent；iPhone 实测 ~35 tok/s（需 ≥6GB 内存）",
+            templateType: .chatML,
+            supportsMultimodal: false,
+            supportsToolCalling: true
+        ),
+        AIModelInfo(
+            id: "deepseek-r1-distill-1.5b-q4km",
+            name: "DeepSeek R1-Distill 1.5B",
+            repo: "unsloth/DeepSeek-R1-Distill-Qwen-1.5B-GGUF",
+            fileName: "DeepSeek-R1-Distill-Qwen-1.5B-Q4_K_M.gguf",
+            sizeDescription: "~0.9 GB",
+            description: "推理首选小模型：数学/代码强、带思考过程（App 自动折叠展示 <think>），~55 tok/s 任意 iPhone 可跑",
+            templateType: .chatML,
+            supportsMultimodal: false,
+            supportsToolCalling: false
+        ),
+        AIModelInfo(
+            id: "qwen3-8b-q4km",
+            name: "Qwen3 8B",
+            repo: "unsloth/Qwen3-8B-GGUF",
+            fileName: "Qwen3-8B-Q4_K_M.gguf",
+            sizeDescription: "~4.8 GB",
+            description: "更大参数：中文/推理/代码全面更强，但需 8GB 内存机型（iPhone 15 Pro 及以上），~18 tok/s 偏慢",
+            templateType: .chatML,
+            supportsMultimodal: false,
+            supportsToolCalling: true
+        ),
     ]
 
-    /// 首启时优先下载并自动加载的默认模型（Phi-4-mini 3.8B：非 Qwen 里工具调用/指令遵循最稳，国内镜像可直连）。
+    /// 首启时优先下载并自动加载的默认模型（Qwen3-4B-2507：中文最强端侧 + 工具调用强 + 非推理输出干净）
     static var defaultModel: AIModelInfo {
-        catalog.first { $0.id == "phi-4-mini-3.8b-q4km" } ?? catalog[0]
+        catalog.first { $0.id == "qwen3-4b-2507-q4km" } ?? catalog[0]
     }
 }
 
@@ -181,6 +229,46 @@ struct ModelSettings: Codable, Sendable {
     /// API 最大 token 数
     var apiMaxTokens: Int
 
+    // MARK: - 复现新增设置
+    /// 发送时自动联网搜索（将搜索结果注入上下文）
+    var cloudWebSearch: Bool
+    /// 朗读引擎："system"（系统 TTS）或 "network"（OpenAI 兼容网络 TTS）
+    var ttsEngine: String
+    /// 系统 TTS 语音标识（如 zh-CN / en-US）
+    var ttsVoice: String
+    /// 网络 TTS 音色名（如 alloy / echo）
+    var ttsVoiceName: String
+    /// 网络 TTS 模型名
+    var ttsModel: String
+    /// 界面语言："zh" / "en"
+    var language: String
+
+    // MARK: - 复现新增（第二批）
+    /// 生成时保持屏幕常亮（防止长回复时锁屏中断）
+    var keepScreenOn: Bool
+    /// 注入「长期记忆」到系统提示词
+    var memoryEnabled: Bool
+    /// 注入「世界观设定」到系统提示词
+    var worldBookEnabled: Bool
+    /// 注入「指令」到系统提示词
+    var instructionEnabled: Bool
+    /// 提示词策略：auto（按模型能力自动）/ simple / standard / pro / off
+    var promptStrategy: String
+    /// Metal 自动加速：按设备内存自动决定 GPU offload 层数（防 OOM），关闭则用手动 gpuLayers
+    var useMetalAuto: Bool
+    /// KV 缓存量化（Q8_0）：KV 内存减半，长上下文/大模型更省内存，质量损失很小
+    var kvCacheQuantize: Bool
+    /// 启动时自动检查新版本（滚动更新引导）
+    var autoCheckUpdate: Bool
+    /// 对话结束后自动提炼长期记忆（世界观/记忆的自动抽取 pipeline）
+    var autoExtractMemory: Bool
+    // S3 备份配置
+    var s3Endpoint: String
+    var s3Bucket: String
+    var s3AccessKey: String
+    var s3SecretKey: String
+    var s3Region: String
+
     // MARK: - SSH 配置（Agent `ssh` 工具默认连接）
     /// 默认 SSH 主机
     var sshHost: String
@@ -216,6 +304,26 @@ struct ModelSettings: Codable, Sendable {
         apiModel: String = "gpt-4o-mini",
         apiTemperature: Double = 0.7,
         apiMaxTokens: Int = 4096,
+        cloudWebSearch: Bool = false,
+        ttsEngine: String = "system",
+        ttsVoice: String = "",
+        ttsVoiceName: String = "alloy",
+        ttsModel: String = "tts-1",
+        language: String = "zh",
+        keepScreenOn: Bool = false,
+        memoryEnabled: Bool = false,
+        worldBookEnabled: Bool = false,
+        instructionEnabled: Bool = false,
+        promptStrategy: String = "auto",
+        useMetalAuto: Bool = true,
+        kvCacheQuantize: Bool = false,
+        autoCheckUpdate: Bool = true,
+        autoExtractMemory: Bool = false,
+        s3Endpoint: String = "",
+        s3Bucket: String = "",
+        s3AccessKey: String = "",
+        s3SecretKey: String = "",
+        s3Region: String = "us-east-1",
         sshHost: String = "",
         sshPort: Int = 22,
         sshUser: String = "",
@@ -242,6 +350,26 @@ struct ModelSettings: Codable, Sendable {
         self.apiModel = apiModel
         self.apiTemperature = apiTemperature
         self.apiMaxTokens = apiMaxTokens
+        self.cloudWebSearch = cloudWebSearch
+        self.ttsEngine = ttsEngine
+        self.ttsVoice = ttsVoice
+        self.ttsVoiceName = ttsVoiceName
+        self.ttsModel = ttsModel
+        self.language = language
+        self.keepScreenOn = keepScreenOn
+        self.memoryEnabled = memoryEnabled
+        self.worldBookEnabled = worldBookEnabled
+        self.instructionEnabled = instructionEnabled
+        self.promptStrategy = promptStrategy
+        self.useMetalAuto = useMetalAuto
+        self.kvCacheQuantize = kvCacheQuantize
+        self.autoCheckUpdate = autoCheckUpdate
+        self.autoExtractMemory = autoExtractMemory
+        self.s3Endpoint = s3Endpoint
+        self.s3Bucket = s3Bucket
+        self.s3AccessKey = s3AccessKey
+        self.s3SecretKey = s3SecretKey
+        self.s3Region = s3Region
         self.sshHost = sshHost
         self.sshPort = sshPort
         self.sshUser = sshUser
@@ -258,6 +386,10 @@ struct ModelSettings: Codable, Sendable {
         case temperature, topP, topK, maxTokens, contextLength, systemPrompt,
              gpuLayers, searchEngine, searxngURL, showThinking, showToolCalls, useMmap,
              apiEnabled, apiEndpoint, apiKey, apiModel, apiTemperature, apiMaxTokens,
+             cloudWebSearch, ttsEngine, ttsVoice, ttsVoiceName, ttsModel, language,
+             keepScreenOn, memoryEnabled, worldBookEnabled, instructionEnabled,
+             promptStrategy, useMetalAuto, kvCacheQuantize, autoCheckUpdate, autoExtractMemory,
+             s3Endpoint, s3Bucket, s3AccessKey, s3SecretKey, s3Region,
              sshHost, sshPort, sshUser, sshAuthType, sshPassword, sshPrivateKey, sshPassphrase
     }
 
@@ -286,6 +418,26 @@ struct ModelSettings: Codable, Sendable {
         apiModel = try c.decodeIfPresent(String.self, forKey: .apiModel) ?? "gpt-4o-mini"
         apiTemperature = try c.decodeIfPresent(Double.self, forKey: .apiTemperature) ?? 0.7
         apiMaxTokens = try c.decodeIfPresent(Int.self, forKey: .apiMaxTokens) ?? 4096
+        cloudWebSearch = try c.decodeIfPresent(Bool.self, forKey: .cloudWebSearch) ?? false
+        ttsEngine = try c.decodeIfPresent(String.self, forKey: .ttsEngine) ?? "system"
+        ttsVoice = try c.decodeIfPresent(String.self, forKey: .ttsVoice) ?? ""
+        ttsVoiceName = try c.decodeIfPresent(String.self, forKey: .ttsVoiceName) ?? "alloy"
+        ttsModel = try c.decodeIfPresent(String.self, forKey: .ttsModel) ?? "tts-1"
+        language = try c.decodeIfPresent(String.self, forKey: .language) ?? "zh"
+        keepScreenOn = try c.decodeIfPresent(Bool.self, forKey: .keepScreenOn) ?? false
+        memoryEnabled = try c.decodeIfPresent(Bool.self, forKey: .memoryEnabled) ?? false
+        worldBookEnabled = try c.decodeIfPresent(Bool.self, forKey: .worldBookEnabled) ?? false
+        instructionEnabled = try c.decodeIfPresent(Bool.self, forKey: .instructionEnabled) ?? false
+        promptStrategy = try c.decodeIfPresent(String.self, forKey: .promptStrategy) ?? "auto"
+        useMetalAuto = try c.decodeIfPresent(Bool.self, forKey: .useMetalAuto) ?? true
+        kvCacheQuantize = try c.decodeIfPresent(Bool.self, forKey: .kvCacheQuantize) ?? false
+        autoCheckUpdate = try c.decodeIfPresent(Bool.self, forKey: .autoCheckUpdate) ?? true
+        autoExtractMemory = try c.decodeIfPresent(Bool.self, forKey: .autoExtractMemory) ?? false
+        s3Endpoint = try c.decodeIfPresent(String.self, forKey: .s3Endpoint) ?? ""
+        s3Bucket = try c.decodeIfPresent(String.self, forKey: .s3Bucket) ?? ""
+        s3AccessKey = try c.decodeIfPresent(String.self, forKey: .s3AccessKey) ?? ""
+        s3SecretKey = try c.decodeIfPresent(String.self, forKey: .s3SecretKey) ?? ""
+        s3Region = try c.decodeIfPresent(String.self, forKey: .s3Region) ?? "us-east-1"
         sshHost = try c.decodeIfPresent(String.self, forKey: .sshHost) ?? ""
         sshPort = try c.decodeIfPresent(Int.self, forKey: .sshPort) ?? 22
         sshUser = try c.decodeIfPresent(String.self, forKey: .sshUser) ?? ""
@@ -315,6 +467,26 @@ struct ModelSettings: Codable, Sendable {
         try c.encode(apiModel, forKey: .apiModel)
         try c.encode(apiTemperature, forKey: .apiTemperature)
         try c.encode(apiMaxTokens, forKey: .apiMaxTokens)
+        try c.encode(cloudWebSearch, forKey: .cloudWebSearch)
+        try c.encode(ttsEngine, forKey: .ttsEngine)
+        try c.encode(ttsVoice, forKey: .ttsVoice)
+        try c.encode(ttsVoiceName, forKey: .ttsVoiceName)
+        try c.encode(ttsModel, forKey: .ttsModel)
+        try c.encode(language, forKey: .language)
+        try c.encode(keepScreenOn, forKey: .keepScreenOn)
+        try c.encode(memoryEnabled, forKey: .memoryEnabled)
+        try c.encode(worldBookEnabled, forKey: .worldBookEnabled)
+        try c.encode(instructionEnabled, forKey: .instructionEnabled)
+        try c.encode(promptStrategy, forKey: .promptStrategy)
+        try c.encode(useMetalAuto, forKey: .useMetalAuto)
+        try c.encode(kvCacheQuantize, forKey: .kvCacheQuantize)
+        try c.encode(autoCheckUpdate, forKey: .autoCheckUpdate)
+        try c.encode(autoExtractMemory, forKey: .autoExtractMemory)
+        try c.encode(s3Endpoint, forKey: .s3Endpoint)
+        try c.encode(s3Bucket, forKey: .s3Bucket)
+        try c.encode(s3AccessKey, forKey: .s3AccessKey)
+        try c.encode(s3SecretKey, forKey: .s3SecretKey)
+        try c.encode(s3Region, forKey: .s3Region)
         try c.encode(sshHost, forKey: .sshHost)
         try c.encode(sshPort, forKey: .sshPort)
         try c.encode(sshUser, forKey: .sshUser)

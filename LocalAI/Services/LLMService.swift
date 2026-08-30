@@ -69,6 +69,20 @@ final class LLMService: ObservableObject {
         return false
     }
 
+    /// 是否已选择可用的云端 Provider + 模型（多 Provider 模式）
+    var hasCloudSelection: Bool {
+        ProviderStore.shared.hasCloudSelection
+    }
+
+    /// 当前可用的云 Provider（选中且已配置密钥）
+    var currentCloudProvider: ChatProvider? {
+        ProviderStore.shared.currentProvider
+    }
+
+    var currentCloudModel: String {
+        ProviderStore.shared.currentModel
+    }
+
     var isApiMode: Bool {
         if case .apiMode = state { return true }
         return false
@@ -134,17 +148,67 @@ final class LLMService: ObservableObject {
     func streamChat(
         history: [ChatMessage],
         settings: ModelSettings,
-        images: [CGImage] = []
+        images: [CGImage] = [],
+        tools: [AgentToolDefinition] = []
     ) -> AsyncThrowingStream<String, Error> {
-        // API 模式
+        // 云端 Provider 模式（多 Provider）
+        if hasCloudSelection, let provider = currentCloudProvider {
+            return streamCloud(
+                provider: provider, model: currentCloudModel,
+                history: history, settings: settings, images: images,
+                tools: tools
+            )
+        }
+
+        // 旧 API 模式
         if settings.apiEnabled, case .apiMode = state {
             return streamChatAPI(history: history, settings: settings)
         }
-        
+
         // 本地模式
         let engine = tryRequireEngine()
         let msgs = toEngineMessages(history, settings: settings)
         return engine.stream(messages: msgs, settings: settings, images: images)
+    }
+
+    /// 云端 Provider 流式对话（OpenAI / Gemini / Claude）
+    func streamCloud(
+        provider: ChatProvider,
+        model: String,
+        history: [ChatMessage],
+        settings: ModelSettings,
+        images: [CGImage] = [],
+        tools: [AgentToolDefinition] = []
+    ) -> AsyncThrowingStream<String, Error> {
+        let cloudMessages = makeCloudMessages(history, settings: settings)
+        // 仅在 Agent 模式 + 用户真传了 tool 定义时启用 native flow(避免普通对话误注入)
+        let effectiveTools: [AgentToolDefinition] = tools.isEmpty ? [] : tools
+        return CloudChatClient.stream(
+            provider: provider,
+            model: model,
+            messages: cloudMessages,
+            temperature: settings.temperature,
+            maxTokens: settings.apiMaxTokens,
+            tools: effectiveTools.isEmpty ? nil : effectiveTools
+        )
+    }
+
+    /// 云端单轮流式调用，聚合返回完整文本
+    func completeCloud(
+        provider: ChatProvider,
+        model: String,
+        history: [ChatMessage],
+        settings: ModelSettings,
+        images: [CGImage] = []
+    ) async throws -> String {
+        let cloudMessages = makeCloudMessages(history, settings: settings)
+        return try await CloudChatClient.complete(
+            provider: provider,
+            model: model,
+            messages: cloudMessages,
+            temperature: settings.temperature,
+            maxTokens: settings.apiMaxTokens
+        )
     }
 
     /// API 模式流式对话
@@ -172,6 +236,17 @@ final class LLMService: ObservableObject {
         settings: ModelSettings,
         images: [CGImage] = []
     ) async throws -> String {
+        // 云端 Provider 模式
+        if hasCloudSelection, let provider = currentCloudProvider {
+            return try await completeCloud(
+                provider: provider,
+                model: currentCloudModel,
+                history: messages,
+                settings: settings,
+                images: images
+            )
+        }
+
         // API 模式
         if settings.apiEnabled, case .apiMode = state {
             return try await completeAPI(messages: messages, settings: settings)
@@ -242,16 +317,75 @@ final class LLMService: ObservableObject {
         return result
     }
 
+    /// 渲染为云端协议消息（含图片，供 OpenAI / Gemini / Claude）
+    func makeCloudMessages(_ messages: [ChatMessage], settings: ModelSettings) -> [CloudMessage] {
+        var result: [CloudMessage] = []
+        let hasSystem = messages.contains { $0.role == .system }
+        if !hasSystem, !settings.systemPrompt.isEmpty {
+            result.append(.init(role: .system, content: settings.systemPrompt))
+        }
+        for m in messages {
+            switch m.role {
+            case .user:
+                // user 消息 content 为空但有图片：OpenAI/Gemini/Claude 都要求 content 字段存在
+                let content = m.content.isEmpty && !m.images.isEmpty ? "（附图片）" : m.content
+                result.append(.init(role: .user, content: content, images: m.images))
+            case .assistant:
+                // assistant content 不能为空（OpenAI 拒空 assistant message），
+                // 改用单一空格避免 HTTP 400。
+                let content = m.content.isEmpty ? " " : m.content
+                result.append(.init(role: .assistant, content: content))
+            case .tool:
+                // OpenAI tool message 必须带 tool_call_id,且必须对应上面 assistant.tool_calls[i].id。
+                // 本地模型(DeepSeek-R1/Qwen3)用 <think>...JSON... 这种 prose 风格调用工具,
+                // 没生成 tool_calls,直接传 role=tool 会让 provider 报 HTTP 400 "messages with
+                // role 'tool' must be a response to a preceeding message with 'tool_calls'".
+                // 兜底：把 tool 结果包装成 user-role 消息,加上 [工具结果] 前缀,云端模型
+                // 仍能拿到上下文,继续生成 — 不依赖严格的 tool_calls 协议。
+                result.append(.init(role: .user, content: "[工具执行结果]\n" + m.content))
+            case .system:
+                result.append(.init(role: .system, content: m.content))
+            }
+        }
+        return result
+    }
+
     /// 创建 llama.cpp(GGUF) 引擎（本地推理，支持多模态）。
     /// 注意：`LlamaSwiftEngine.init` 内部是同步阻塞的 C 调用 `llama_bridge_load_model`
     /// （含 ggml/Metal 后端初始化），耗时数百毫秒。若在主线程执行会卡 UI
     /// （见 UIKit-runloop 卡顿报告）。用 detached 切到后台线程跑，
     /// 引擎创建完成后再回到调用方 actor（MainActor）写 @Published 状态。
     private func makeLlamaEngine(url: URL) async throws -> LLMEngine {
-        let gpuLayers = SettingsStorage.shared.settings.gpuLayers
+        let settings = SettingsStorage.shared.settings
+        // Metal 自动加速：按设备内存 + 上下文长度推荐 GPU offload 层数（防 OOM）
+        let gpuLayers = settings.useMetalAuto
+            ? Self.recommendedGpuLayers(contextLength: settings.contextLength)
+            : settings.gpuLayers
         return try await Task.detached(priority: .userInitiated) {
             try await LlamaSwiftEngine(modelURL: url, gpuLayers: Int32(gpuLayers))
         }.value
+    }
+
+    /// 设备内存（GB）
+    static var deviceRAMGB: Int {
+        Int(ProcessInfo.processInfo.physicalMemory / (1024 * 1024 * 1024))
+    }
+
+    /// 按设备内存 + 上下文长度推荐 Metal GPU offload 层数：
+    /// - <6GB 设备：纯 CPU（Metal 极易 OOM）
+    /// - 6GB：16 层；≥8GB：32 层
+    /// - 上下文越长 KV 缓存越大，相应降档（4096+ → 1/4，2048+ → 1/2）
+    static func recommendedGpuLayers(contextLength: Int) -> Int {
+        let ram = deviceRAMGB
+        let base: Int
+        switch ram {
+        case 8...: base = 32
+        case 6..<8: base = 16
+        default: return 0
+        }
+        if contextLength > 4096 { return max(0, base / 4) }
+        if contextLength > 2048 { return max(0, base / 2) }
+        return base
     }
 }
 

@@ -17,6 +17,8 @@ void llama_bridge_free(llama_bridge * b);
 // Load a GGUF model. mmproj_path may be NULL or "" when the model is text-only.
 // load_mode: LLAMA_LOAD_MODE_MMAP for memory-mapped I/O (reduces RAM usage),
 //            LLAMA_LOAD_MODE_NONE for normal loading (faster but more RAM).
+// kv_cache_quant: 1 = Q8_0 KV cache (halves KV memory, slight quality loss),
+//                 0 = F16 KV cache (default).
 // Returns true on success; on failure, use llama_bridge_last_error().
 bool llama_bridge_load_model(llama_bridge * b,
                              const char * model_path,
@@ -24,7 +26,8 @@ bool llama_bridge_load_model(llama_bridge * b,
                              int n_ctx,
                              int n_gpu_layers,
                              int n_threads,
-                             int load_mode);
+                             int load_mode,
+                             int kv_cache_quant);
 
 // Returns a UTF-8 error string (valid until the next bridge call).
 const char * llama_bridge_last_error(llama_bridge * b);

@@ -28,6 +28,9 @@ final class AgentService: ObservableObject {
         let attachToolCall: (UUID, ChatMessage.ToolCall) -> Void
         /// 结束当前轮迭代：气泡停止 streaming（isStreaming = false）。
         let endIteration: (UUID) -> Void
+        /// 请求用户授权执行 requiresApproval=true 的工具（SSH / MCP / 网络等副作用工具）。
+        /// 返回 true = 用户允许执行；false = 拒绝（UI 展示"用户拒绝"并回填上下文继续循环）。
+        let requestApproval: (UUID, ChatMessage.ToolCall) async -> Bool
     }
 
     @Published private(set) var steps: [Step] = []
@@ -66,26 +69,24 @@ final class AgentService: ObservableObject {
     /// 含未闭合的情况（生成被 max_tokens 截断或中止时常见）。
     /// Agent 模式下模型常把工具 JSON / 最终答案整段裹在思考块里，
     /// 若不剥离，`extractFinalAnswer` / `parseToolCall` 会把答案误判为"思考内容"而吞掉正文。
+
+
+    /// 统一的思考块解析：返回 (思考内容, 正文答案)
+    /// 兼容常见格式：<think>...<\/think> / <reasoning>...</reasoning> / 未闭合。
+    /// 返回的 think 内容可能包含未闭合的尾部， caller 须自行判断。
+    static func parseThinkBlock(_ text: String) -> (think: String, answer: String) {
+        // 与 ChatMessage.parseThinkBlock 保持一致（<think> / <reasoning>，含未闭合），
+        // 避免两套解析逻辑漂移导致思考块剥离不一致。
+        ChatMessage.parseThinkBlock(text)
+    }
+
+    /// 去除推理模型的 think 块。
+    /// 兼容常见格式：<think>...<\/think> / <reasoning>...</reasoning> / 未闭合。
+    /// Agent 模式下模型常把工具 JSON / 最终答案整段裹在思考块里，
+    /// 若不剥离，后续解析会把答案误判为"思考内容"而吞掉正文。
     static func stripThinkTags(_ text: String) -> String {
-        var result = text
-        var searchFrom = result.startIndex
-        while true {
-            let rest = result[searchFrom...]
-            guard let open = rest.range(of: "<think>", options: [.caseInsensitive])
-                ?? rest.range(of: "<reasoning>", options: [.caseInsensitive])
-            else { break }
-            let afterOpen = open.upperBound
-            if let close = result[afterOpen...].range(of: "</think>", options: [.caseInsensitive])
-                ?? result[afterOpen...].range(of: "</reasoning>", options: [.caseInsensitive]) {
-                result.removeSubrange(open.lowerBound..<close.upperBound)
-                searchFrom = open.lowerBound
-            } else {
-                // 未闭合：删除从 open 到结尾的整段（视为未完成的思考）
-                result.removeSubrange(open.lowerBound..<result.endIndex)
-                break
-            }
-        }
-        return result.trimmingCharacters(in: .whitespacesAndNewlines)
+        let (_, answer) = parseThinkBlock(text)
+        return answer.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     /// 把 Agent 原始输出清理为可展示给用户的正文：移除结束暗号、工具调用 JSON、markdown 围栏。
@@ -228,26 +229,66 @@ final class AgentService: ObservableObject {
                 appendStep(.thinking, "调用工具 \(call.name)(\(argsJSON))")
                 appendStep(.executing, call.name)
 
-                let result = await BuiltInTools.execute(toolName: call.name, argumentsJSON: argsJSON)
-                let limited = Self.limitResult(result)
-                let record = ChatMessage.ToolCall(
+                // 授权检查（opencode 风格）：requiresApproval=true 的工具（SSH / MCP / 网络等）
+                // 先以 .awaitingApproval 状态挂到气泡，阻塞等用户决策；
+                // 无桥（非交互 / 测试）时默认拒绝，绝不静默执行敏感操作。
+                let definition = toolsEnabledTools.first { $0.name == call.name }
+                let needsApproval = definition?.requiresApproval ?? false
+                var record = ChatMessage.ToolCall(
                     id: UUID().uuidString,
                     name: call.name,
                     arguments: argsJSON,
-                    result: limited
+                    status: needsApproval ? .awaitingApproval : .running
+                    // title 留空：UI 各处均回退到 name，避免长描述挤占授权弹窗标题
                 )
-                allToolCalls.append(record)
-                appendStep(.result, "\(call.name) → \(limited)")
-                // 流式：把工具调用挂到当前轮气泡（可展开 chip 展示参数/结果）
                 if let id = iterationID { bridge?.attachToolCall(id, record) }
 
-                // 把工具结果作为新一轮上下文
-                workingHistory.append(
-                    ChatMessage(role: .assistant, content: content, toolCalls: [record])
-                )
-                workingHistory.append(
-                    ChatMessage(role: .tool, content: "[\(call.name) 结果]\n\(limited)")
-                )
+                var approved = true
+                if needsApproval {
+                    appendStep(.thinking, "等待用户授权 \(call.name)…")
+                    if let bridge {
+                        // 第一个参数是气泡 id（ChatView 当前忽略，仅透传 call）
+                        approved = await bridge.requestApproval(iterationID ?? UUID(), record)
+                    } else {
+                        approved = false   // 无交互环境：默认拒绝
+                    }
+                }
+
+                if approved {
+                    record.status = .running
+                    if let id = iterationID { bridge?.attachToolCall(id, record) }
+
+                    let result = await BuiltInTools.execute(toolName: call.name, argumentsJSON: argsJSON)
+                    let limited = Self.limitResult(result)
+                    record.result = limited
+                    record.status = .complete
+                    record.truncated = limited != result
+                    allToolCalls.append(record)
+                    appendStep(.result, "\(call.name) → \(limited)")
+                    if let id = iterationID { bridge?.attachToolCall(id, record) }
+
+                    // 把工具结果作为新一轮上下文
+                    workingHistory.append(
+                        ChatMessage(role: .assistant, content: content, toolCalls: [record])
+                    )
+                    workingHistory.append(
+                        ChatMessage(role: .tool, content: "[\(call.name) 结果]\n\(limited)")
+                    )
+                } else {
+                    // 用户拒绝：记录错误并回填上下文，让模型决定换路或直接回答
+                    record.status = .error
+                    record.result = "用户拒绝执行"
+                    allToolCalls.append(record)
+                    appendStep(.result, "\(call.name) 已被用户拒绝")
+                    if let id = iterationID { bridge?.attachToolCall(id, record) }
+
+                    workingHistory.append(
+                        ChatMessage(role: .assistant, content: content, toolCalls: [record])
+                    )
+                    workingHistory.append(
+                        ChatMessage(role: .tool, content: "[\(call.name) 结果]\n用户拒绝执行该工具，请根据情况换用其他工具或直接回答。")
+                    )
+                }
                 if let id = iterationID { bridge?.endIteration(id) }
             } else {
                 // 3) 无暗号、无有效工具调用：视为模型的中间思考，
@@ -467,6 +508,9 @@ final class AgentService: ObservableObject {
         }
         return results
     }
+
+
+
 
     private static func compactJSON(_ dict: [String: Any]) -> String {
         guard JSONSerialization.isValidJSONObject(dict),

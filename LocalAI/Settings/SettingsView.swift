@@ -3,6 +3,8 @@ import SwiftUI
 struct SettingsView: View {
     @EnvironmentObject private var llmService: LLMService
     @EnvironmentObject private var chatStore: ChatStore
+    @EnvironmentObject private var theme: LocalAIApp.ThemeObserver
+    @Environment(\.colorScheme) private var colorScheme
     @ObservedObject private var storage = SettingsStorage.shared
 
     @State private var showDeleteConfirm = false
@@ -21,6 +23,9 @@ struct SettingsView: View {
                     displayCard
                     memoryCard
                     systemPromptCard
+                    FeaturesCard
+                    cloudStorageCard
+                    updateCard
                     searchCard
                     sshCard
                     aboutCard
@@ -28,7 +33,8 @@ struct SettingsView: View {
                 }
                 .padding(14)
             }
-            .background(Color(.systemGroupedBackground))
+            .background(theme.current.pageBackground(for: colorScheme))
+            .scrollEdgeEffectStyle(.hard, for: .top)
             .navigationTitle("设置")
             .scrollDismissesKeyboard(.interactively)
             .onTapGesture {
@@ -123,9 +129,51 @@ struct SettingsView: View {
                 stepperRow("Top-K", value: $storage.settings.topK, in: 1...100, step: 5)
                 stepperRow("最大生成 Token", value: $storage.settings.maxTokens, in: 256...8192, step: 256)
                 stepperRow("上下文长度", value: $storage.settings.contextLength, in: 1024...8192, step: 1024)
-                stepperRow("GPU 层数 (0=纯CPU)", value: $storage.settings.gpuLayers, in: 0...64, step: 4)
 
-                Text("参数在下次对话时生效。上下文越长占用内存越高；iPhone 统一内存有限，开启 GPU 层数时建议上下文 ≤2048，否则极易触发 Metal 显存不足。默认 0（纯 CPU）最稳定；调高 GPU 层数可加速，需在「模型」页重新加载模型。")
+                Divider()
+
+                // Metal 自动加速（Apple 原生 Metal 后端，按设备内存防 OOM）
+                Toggle(isOn: $storage.settings.useMetalAuto) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Metal 自动加速")
+                            .font(.subheadline)
+                        Text("按设备内存自动决定 GPU offload 层数，兼顾速度与稳定（防显存不足）")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .tint(.teal)
+
+                if storage.settings.useMetalAuto {
+                    let ram = LLMService.deviceRAMGB
+                    let rec = LLMService.recommendedGpuLayers(contextLength: storage.settings.contextLength)
+                    HStack {
+                        Text("当前状态")
+                            .font(.subheadline)
+                        Spacer()
+                        Text(rec > 0 ? "设备 \(ram)GB · 自动 offload \(rec) 层" : "设备 \(ram)GB · 纯 CPU（内存较小，Metal 易不足）")
+                            .font(.caption)
+                            .foregroundStyle(rec > 0 ? .green : .orange)
+                    }
+                } else {
+                    stepperRow("GPU 层数 (0=纯CPU)", value: $storage.settings.gpuLayers, in: 0...64, step: 4)
+                }
+
+                Divider()
+
+                // KV 缓存量化（Q8_0）：KV 内存减半，长上下文/大模型更省内存
+                Toggle(isOn: $storage.settings.kvCacheQuantize) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("KV 缓存量化 (Q8_0)")
+                            .font(.subheadline)
+                        Text("KV 缓存内存减半，可支撑更长上下文/更大模型；质量损失很小。需重新加载模型生效")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .tint(.indigo)
+
+                Text("参数在下次对话时生效。上下文越长占用内存越高；自动模式下长上下文会自动降低 GPU 层数防 OOM。实测速度会显示在每条回复下方（⚡ tok/s）。")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
@@ -160,6 +208,39 @@ struct SettingsView: View {
                     }
                 }
                 .tint(.orange)
+
+                // 主题色切换：5 套配色实时预览
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("主题色")
+                        .font(.subheadline)
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 12) {
+                            ForEach(AppTheme.allCases, id: \.rawValue) { t in
+                                Button {
+                                    theme.current = t
+                                } label: {
+                                    VStack(spacing: 6) {
+                                        Circle()
+                                            .fill(t.accentColor)
+                                            .frame(width: 32, height: 32)
+                                            .overlay(
+                                                Circle().strokeBorder(
+                                                    theme.current == t ? Color.primary : Color.clear,
+                                                    lineWidth: 2
+                                                )
+                                            )
+                                            .shadow(color: t.accentColor.opacity(0.4), radius: 4)
+                                        Text(t.displayName)
+                                            .font(.caption2)
+                                            .foregroundStyle(theme.current == t ? .primary : .secondary)
+                                    }
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                        .padding(.vertical, 4)
+                    }
+                }
             }
         }
     }
@@ -226,6 +307,402 @@ struct SettingsView: View {
                 .padding(10)
                 .background(.quaternary, in: .rect(cornerRadius: 12))
                 .focused($focusedField, equals: .systemPrompt)
+            }
+        }
+    }
+
+    // MARK: - 语言 / 联网搜索 / 朗读 / 变量
+
+    private var FeaturesCard: some View {
+        GlassCard {
+            VStack(alignment: .leading, spacing: 14) {
+                SectionHeader(title: "语言 / 朗读 / 搜索", systemImage: "globe")
+
+                // 语言
+                HStack {
+                    Text(t("语言")).font(.subheadline)
+                    Spacer()
+                    Picker(t("语言"), selection: $storage.settings.language) {
+                        Text(t("中文")).tag("zh")
+                        Text(t("English")).tag("en")
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(maxWidth: 200)
+                }
+
+                Divider()
+
+                // 云端联网搜索
+                Toggle(isOn: $storage.settings.cloudWebSearch) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(t("云端联网搜索"))
+                            .font(.subheadline)
+                        Text(t("发送消息时自动搜索互联网并注入上下文"))
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .tint(.blue)
+
+                Divider()
+
+                // 朗读引擎
+                Picker(t("朗读引擎"), selection: $storage.settings.ttsEngine) {
+                    Text(t("系统 TTS")).tag("system")
+                    Text(t("网络 TTS")).tag("network")
+                }
+                .pickerStyle(.segmented)
+
+                if storage.settings.ttsEngine == "network" {
+                    HStack {
+                        Text(t("网络音色")).font(.subheadline)
+                        Spacer()
+                        TextField("alloy", text: $storage.settings.ttsVoiceName)
+                            .textFieldStyle(.plain)
+                            .multilineTextAlignment(.trailing)
+                            .frame(width: 140)
+                    }
+                    Text("使用当前云端 Provider 的 OpenAI 兼容 /audio/speech 接口；不可用时自动回退系统 TTS。")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                } else {
+                    HStack {
+                        Text(t("系统语音")).font(.subheadline)
+                        Spacer()
+                        Picker(t("系统语音"), selection: $storage.settings.ttsVoice) {
+                            Text("自动 (zh-CN)").tag("")
+                            Text("普通话 zh-CN").tag("zh-CN")
+                            Text("粤语 zh-HK").tag("zh-HK")
+                            Text("English US").tag("en-US")
+                            Text("English UK").tag("en-GB")
+                        }
+                        .frame(maxWidth: 200)
+                    }
+                }
+
+                Divider()
+
+                // 提示词策略
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Text("提示词策略").font(.subheadline)
+                        Spacer()
+                        Picker("提示词策略", selection: $storage.settings.promptStrategy) {
+                            ForEach(PromptStrategy.allCases, id: \.rawValue) { s in
+                                Text(s.displayName).tag(s.rawValue)
+                            }
+                        }
+                        .frame(maxWidth: 210)
+                    }
+                    Text("自动：本地 ≤3B 小模型用简洁提示词；云端轻量模型用标准；云端旗舰（GPT-4o/Claude/Gemini Pro 等）用深度专业提示词。")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+
+                Divider()
+
+                // 提示词变量
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(t("提示词变量")).font(.subheadline)
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            variableChip("{model}")
+                            variableChip("{provider}")
+                            variableChip("{date}")
+                            variableChip("{time}")
+                            variableChip("{datetime}")
+                        }
+                    }
+                    Text("在系统提示词或助手中使用，发送时自动替换为当前模型名 / Provider / 日期时间。")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    private func variableChip(_ name: String) -> some View {
+        Text(name)
+            .font(.caption.monospaced())
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(.quaternary, in: .capsule)
+    }
+
+    // MARK: - 云存储 / 屏幕常亮 / 人格记忆
+
+    private var cloudStorageCard: some View {
+        GlassCard {
+            VStack(alignment: .leading, spacing: 14) {
+                SectionHeader(title: "云存储 / 屏幕常亮", systemImage: "externaldrive")
+
+                // 屏幕常亮
+                Toggle(isOn: $storage.settings.keepScreenOn) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("生成时保持屏幕常亮")
+                            .font(.subheadline)
+                        Text("防止长回复时锁屏中断（keep screen on）")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .tint(.purple)
+
+                Divider()
+
+                // 人格与记忆入口
+                NavigationLink {
+                    PersonaView()
+                } label: {
+                    HStack {
+                        Label("世界观 / 记忆 / 指令", systemImage: "brain.head.profile")
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+
+                Divider()
+
+                // S3 备份
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("S3 云备份（AWS / MinIO / COS / OSS）")
+                        .font(.subheadline.weight(.medium))
+                    TextField("端点 https://s3.amazonaws.com", text: $storage.settings.s3Endpoint)
+                        .textFieldStyle(.plain)
+                        .padding(9)
+                        .background(.quaternary, in: .rect(cornerRadius: 9))
+                        .font(.caption)
+                        .keyboardType(.URL)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                    HStack(spacing: 10) {
+                        TextField("Bucket", text: $storage.settings.s3Bucket)
+                            .textFieldStyle(.plain)
+                            .padding(9)
+                            .background(.quaternary, in: .rect(cornerRadius: 9))
+                            .font(.caption)
+                        TextField("Region", text: $storage.settings.s3Region)
+                            .textFieldStyle(.plain)
+                            .padding(9)
+                            .background(.quaternary, in: .rect(cornerRadius: 9))
+                            .font(.caption)
+                            .frame(maxWidth: 120)
+                    }
+                    HStack(spacing: 10) {
+                        TextField("Access Key", text: $storage.settings.s3AccessKey)
+                            .textFieldStyle(.plain)
+                            .padding(9)
+                            .background(.quaternary, in: .rect(cornerRadius: 9))
+                            .font(.caption)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                        SecureField("Secret Key", text: $storage.settings.s3SecretKey)
+                            .textFieldStyle(.plain)
+                            .padding(9)
+                            .background(.quaternary, in: .rect(cornerRadius: 9))
+                            .font(.caption)
+                    }
+                    HStack(spacing: 10) {
+                        Button {
+                            Task { await uploadToS3() }
+                        } label: {
+                            if isS3Uploading {
+                                ProgressView().controlSize(.mini)
+                            } else {
+                                Label("备份到 S3", systemImage: "arrow.up.to.line")
+                            }
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+
+                        Button {
+                            Task { await downloadFromS3() }
+                        } label: {
+                            if isS3Downloading {
+                                ProgressView().controlSize(.mini)
+                            } else {
+                                Label("从 S3 恢复", systemImage: "arrow.down.to.line")
+                            }
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
+                    Text("备份内容与本地导出一致（会话 + Provider + 助手）。密钥仅存本机。")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .confirmationDialog(
+            "从 S3 恢复将覆盖当前数据，确认继续？",
+            isPresented: $showS3RestoreConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("确认恢复", role: .destructive) {
+                if let pkg = pendingS3Restore {
+                    BackupService.restore(pkg, chatStore: chatStore)
+                    s3Toast = "恢复成功"
+                }
+            }
+            Button(t("取消"), role: .cancel) {}
+        }
+        .overlay(alignment: .bottom) {
+            if let s3Toast {
+                Text(s3Toast)
+                    .font(.subheadline.weight(.medium))
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    .background(.ultraThinMaterial, in: .capsule)
+                    .padding(.bottom, 12)
+            }
+        }
+    }
+
+    // MARK: - S3 动作
+
+    @State private var isS3Uploading = false
+    @State private var isS3Downloading = false
+    @State private var showS3RestoreConfirm = false
+    @State private var pendingS3Restore: BackupService.BackupPackage?
+    @State private var s3Toast: String?
+
+    private func s3Config() -> S3Client.Config? {
+        let s = storage.settings
+        guard !s.s3Endpoint.isEmpty, !s.s3Bucket.isEmpty,
+              !s.s3AccessKey.isEmpty, !s.s3SecretKey.isEmpty
+        else {
+            s3Toast = "S3 配置不完整"
+            return nil
+        }
+        return S3Client.Config(
+            endpoint: s.s3Endpoint, bucket: s.s3Bucket,
+            accessKey: s.s3AccessKey, secretKey: s.s3SecretKey, region: s.s3Region
+        )
+    }
+
+    private static let s3BackupKey = "backups/localai-latest.json"
+
+    private func uploadToS3() async {
+        guard let config = s3Config() else { return }
+        isS3Uploading = true
+        defer { isS3Uploading = false }
+        guard let fileURL = BackupService.makeBackupFile(chatStore: chatStore),
+              let data = try? Data(contentsOf: fileURL)
+        else {
+            s3Toast = "备份生成失败"
+            return
+        }
+        do {
+            try await S3Client.upload(config: config, objectKey: Self.s3BackupKey, data: data)
+            s3Toast = "已上传: \(Self.s3BackupKey)"
+        } catch {
+            s3Toast = "上传失败: \(error.localizedDescription.prefix(80))"
+        }
+    }
+
+    private func downloadFromS3() async {
+        guard let config = s3Config() else { return }
+        isS3Downloading = true
+        defer { isS3Downloading = false }
+        do {
+            let data = try await S3Client.download(config: config, objectKey: Self.s3BackupKey)
+            let pkg = try BackupService.parseBackup(data: data)
+            pendingS3Restore = pkg
+            showS3RestoreConfirm = true
+        } catch {
+            s3Toast = "恢复失败: \(error.localizedDescription.prefix(80))"
+        }
+    }
+
+    // MARK: - 软件更新（滚动更新引导）
+
+    @ObservedObject private var updater = UpdateCheckerService.shared
+
+    private var updateCard: some View {
+        GlassCard {
+            VStack(alignment: .leading, spacing: 12) {
+                SectionHeader(title: "软件更新", systemImage: "arrow.triangle.2.circlepath")
+
+                HStack {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("当前版本 \(updater.currentVersion)")
+                            .font(.subheadline)
+                        if updater.hasUpdate {
+                            Text("发现新版本 \(updater.latestTag ?? "")")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(.green)
+                        } else if updater.lastChecked {
+                            Text("已是最新版本")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    Spacer()
+                    Button {
+                        Task { await updater.check() }
+                    } label: {
+                        if updater.isChecking {
+                            ProgressView().controlSize(.mini)
+                        } else {
+                            Label("检查更新", systemImage: "magnifyingglass")
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(updater.isChecking)
+                }
+
+                Toggle(isOn: $storage.settings.autoCheckUpdate) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("启动时自动检查")
+                            .font(.subheadline)
+                        Text("每天最多检查一次，发现新版后在此提示")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .tint(.blue)
+
+                if updater.hasUpdate {
+                    Divider()
+                    VStack(alignment: .leading, spacing: 8) {
+                        if let notes = updater.releaseNotes, !notes.isEmpty {
+                            Text(String(notes.prefix(400)))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(8)
+                        }
+                        HStack(spacing: 10) {
+                            if let url = updater.downloadURL {
+                                Button {
+                                    #if canImport(UIKit)
+                                    UIApplication.shared.open(url)
+                                    #endif
+                                } label: {
+                                    Label("下载新版 IPA", systemImage: "arrow.down.circle.fill")
+                                        .frame(maxWidth: .infinity)
+                                }
+                                .buttonStyle(.glassProminent)
+                            }
+                            if let url = updater.releaseURL {
+                                Button {
+                                    #if canImport(UIKit)
+                                    UIApplication.shared.open(url)
+                                    #endif
+                                } label: {
+                                    Label("查看发布页", systemImage: "safari")
+                                        .frame(maxWidth: .infinity)
+                                }
+                                .buttonStyle(.glass)
+                            }
+                        }
+                        Text("侧载应用无法自动替换安装：下载 IPA 后请用全能签/自签方式重新安装。")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+                }
             }
         }
     }
@@ -346,9 +823,10 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: 8) {
                 SectionHeader(title: "关于", systemImage: "info.circle")
                 infoRow("推理引擎", "llama.cpp (GGUF) + mtmd 多模态")
-                infoRow("API 支持", "OpenAI 兼容格式（GPT-4o/Claude/DeepSeek 等）")
+                infoRow("API 支持", "OpenAI / Gemini / Claude / 任意兼容端点")
                 infoRow("界面", "SwiftUI · Liquid Glass (iOS 26+)")
                 infoRow("隐私", "本地模式：全部推理在本机完成，无网络上传")
+                infoRow("项目", "原生 Swift 本地大模型客户端")
             }
         }
     }

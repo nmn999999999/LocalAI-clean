@@ -13,6 +13,8 @@ extension ModelManager.StoredModel {
 struct ModelListView: View {
     @EnvironmentObject private var modelManager: ModelManager
     @EnvironmentObject private var llmService: LLMService
+    @EnvironmentObject private var theme: LocalAIApp.ThemeObserver
+    @Environment(\.colorScheme) private var colorScheme
 
     @State private var showImporter = false
     @State private var showCustomURL = false
@@ -29,7 +31,9 @@ struct ModelListView: View {
                 }
                 .padding(14)
             }
-            .background(Color(.systemGroupedBackground))
+            .background(theme.current.pageBackground(for: colorScheme))
+            // iOS 26 液态玻璃：滚动到顶部边界时导航栏恢复"浮动圆球"折叠效果
+            .scrollEdgeEffectStyle(.hard, for: .top)
             .navigationTitle("模型")
             .toolbar {
                 ToolbarItemGroup(placement: .topBarTrailing) {
@@ -241,6 +245,7 @@ struct CatalogModelRow: View {
                             .foregroundStyle(.secondary)
                         HStack(spacing: 6) {
                             ModelBadge(text: model.sizeDescription)
+                            ModelBadge(text: model.estimatedRAMDescription, tint: .blue)
                             if model.supportsMultimodal {
                                 ModelBadge(text: "多模态", tint: .purple)
                             }

@@ -55,6 +55,7 @@ struct ConversationListView: View {
                         dismiss()
                     } label: {
                         Image(systemName: "plus")
+                            .accessibilityLabel(t("新建对话"))
                     }
                 }
                 ToolbarItem(placement: .topBarLeading) {

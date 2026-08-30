@@ -33,11 +33,11 @@ final class LlamaSwiftEngine: LLMEngine, @unchecked Sendable {
             requestedCtx = 2048
         }
 
-        var b: OpaquePointer?
-        guard llama_bridge_create(&b) == 0, let handle = b else {
-            throw LLMError.loadFailed("无法创建推理上下文")
+        var bridge: OpaquePointer?
+        let createResult = llama_bridge_create(&bridge)
+        guard createResult == 0, let handle = bridge else {
+            throw LLMError.loadFailed("无法创建推理上下文: \(createResult == -1 ? "内存不足" : "未知错误")")
         }
-        self.bridge = handle
 
         let mmproj = LlamaSwiftEngine.detectMMProj(nextTo: modelURL)
         let ok = llama_bridge_load_model(
@@ -47,12 +47,14 @@ final class LlamaSwiftEngine: LLMEngine, @unchecked Sendable {
             Int32(requestedCtx),
             nGpuLayers,
             nThreads,
-            SettingsStorage.shared.settings.useMmap ? 1 : 0  // 1 = LLAMA_LOAD_MODE_MMAP, 0 = LLAMA_LOAD_MODE_NONE
+            SettingsStorage.shared.settings.useMmap ? 1 : 0,     // 1 = LLAMA_LOAD_MODE_MMAP, 0 = LLAMA_LOAD_MODE_NONE
+            SettingsStorage.shared.settings.kvCacheQuantize ? 1 : 0  // 1 = Q8_0 KV cache, 0 = F16
         )
         if !ok {
             let err = String(cString: llama_bridge_last_error(handle))
-            throw LLMError.loadFailed(err)
+            throw LLMError.loadFailed("模型加载失败: \(err)")
         }
+        self.bridge = handle
     }
 
     deinit {

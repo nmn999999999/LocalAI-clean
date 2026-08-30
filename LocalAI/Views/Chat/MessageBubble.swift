@@ -5,6 +5,13 @@ import UIKit
 
 struct MessageBubble: View {
     let message: ChatMessage
+    /// 操作回调（由 ChatView 注入）
+    var onRegenerate: (() -> Void)? = nil
+    var onEdit: (() -> Void)? = nil
+    var onDelete: (() -> Void)? = nil
+    var onSpeak: (() -> Void)? = nil
+    var isSpeaking: Bool = false
+
     @State private var copied = false
     @ObservedObject private var settings = SettingsStorage.shared
 
@@ -21,18 +28,32 @@ struct MessageBubble: View {
         return img
     }
 
+    /// 消息时间戳（HH:mm）
+    private static let timeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm"
+        return formatter
+    }()
+
+    static func timeText(_ date: Date) -> String {
+        timeFormatter.string(from: date)
+    }
+
     var body: some View {
         HStack(alignment: .bottom, spacing: 8) {
             if message.role == .user {
-                Spacer(minLength: 48)
+                Spacer(minLength: 40)
             }
             content
             if message.role == .assistant || message.role == .tool {
-                Spacer(minLength: 24)
+                Spacer(minLength: 40)
             }
         }
-        .contextMenu { copyButton }
+        .contextMenu { contextMenuItems }
     }
+
+    /// 气泡最大宽度（user/assistant 统一，保证左右视觉对齐）
+    private static let bubbleMaxWidth: CGFloat = 340
 
     @ViewBuilder
     private var content: some View {
@@ -48,12 +69,20 @@ struct MessageBubble: View {
                         .padding(.horizontal, 14)
                         .padding(.vertical, 10)
                 }
+                Text(Self.timeText(message.timestamp))
+                    .font(.caption2)
+                    .foregroundStyle(.white.opacity(0.6))
+                    .padding(.trailing, 6)
+                    .padding(.bottom, 6)
             }
+            .frame(maxWidth: Self.bubbleMaxWidth, alignment: .trailing)
             .background(Color.accentColor, in: .rect(cornerRadius: 20))
-            .frame(maxWidth: 320, alignment: .trailing)
 
         case .assistant:
-            VStack(alignment: .leading, spacing: 6) {
+            // 布局修正：先把 frame(maxWidth:) 放在最外层，再加 padding 缩进；所有子组件
+            // （ThinkSection / Markdown / toolCallChips / 速度时间戳）都被这个宽度约束，
+            // 思考块或长工具结果展开时不会越过 bubbleMaxWidth 与下一条气泡/右侧贴边重叠。
+            VStack(alignment: .leading, spacing: 8) {
                 if settings.settings.showToolCalls {
                     toolCallChips
                 }
@@ -62,7 +91,7 @@ struct MessageBubble: View {
                 }
                 let displayText = message.isAgentRound ? AgentService.cleanDisplayText(message.visibleContent) : message.visibleContent
                 if !displayText.isEmpty {
-                    Text(displayText)
+                    MarkdownView(markdown: displayText)
                         .textSelection(.enabled)
                 } else if message.isStreaming && message.thinkContent == nil {
                     HStack(spacing: 6) {
@@ -74,8 +103,25 @@ struct MessageBubble: View {
                     }
                     .padding(.vertical, 2)
                 }
+                if !message.isStreaming {
+                    HStack(spacing: 8) {
+                        if let speed = message.speedText, !speed.isEmpty {
+                            Text(speed)
+                                .font(.caption2)
+                                .foregroundStyle(.tint)
+                        }
+                        Text(Self.timeText(message.timestamp))
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+                    .padding(.leading, 4)
+                }
             }
-            .padding(.horizontal, 4)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .frame(maxWidth: Self.bubbleMaxWidth, alignment: .leading)
+            // 整个 assistant 列容器有了统一背景（轻微材质），思考展开时也不会突兀分离
+            .background(.regularMaterial, in: .rect(cornerRadius: 18))
 
         case .tool:
             VStack(alignment: .leading, spacing: 4) {
@@ -116,20 +162,60 @@ struct MessageBubble: View {
     @ViewBuilder
     private var toolCallChips: some View {
         if !message.toolCalls.isEmpty {
-            VStack(alignment: .leading, spacing: 6) {
-                ForEach(message.toolCalls) { call in
-                    ToolCallChip(call: call)
+            // M2(REVIEW): 多个玻璃 chip 必须包 GlassEffectContainer（Apple 文档 Best Practices #1），
+            // spacing 拉开玻璃合并距离，避免 iOS 26.1 真机上相邻 chip 粘成一片（v0.3.22 经验）。
+            GlassEffectContainer(spacing: 10) {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(message.toolCalls) { call in
+                        ToolCallChip(call: call)
+                    }
                 }
             }
         }
     }
 
-    private var copyButton: some View {
+    // MARK: - 操作菜单（复制 / 重新生成 / 编辑 / 删除 / 朗读）
+
+    @ViewBuilder
+    private var contextMenuItems: some View {
         Button {
             UIPasteboard.general.string = message.content
             copied = true
         } label: {
-            Label(copied ? "已复制" : "复制", systemImage: "doc.on.doc")
+            Label(copied ? t("已复制") : t("复制"), systemImage: "doc.on.doc")
+        }
+
+        if message.role == .assistant, let onSpeak {
+            Button {
+                onSpeak()
+            } label: {
+                Label(isSpeaking ? t("停止朗读") : t("朗读"), systemImage: "speaker.wave.2")
+            }
+        }
+
+        if message.role == .assistant, let onRegenerate {
+            Button {
+                onRegenerate()
+            } label: {
+                Label(t("重新生成"), systemImage: "arrow.clockwise")
+            }
+        }
+
+        if message.role == .user, let onEdit {
+            Button {
+                onEdit()
+            } label: {
+                Label(t("编辑消息"), systemImage: "pencil")
+            }
+        }
+
+        if message.role != .system, let onDelete {
+            Divider()
+            Button(role: .destructive) {
+                onDelete()
+            } label: {
+                Label(t("删除消息"), systemImage: "trash")
+            }
         }
     }
 }
@@ -138,17 +224,38 @@ struct ToolCallChip: View {
     let call: ChatMessage.ToolCall
     @State private var expanded = false
 
+    /// 不同状态下应展示的颜色与图标（opencode ToolPart 风格）
+    private var statusBadge: (icon: String, tint: Color, label: String) {
+        switch call.status {
+        case .pending:
+            return ("clock", .secondary, "等待调用")
+        case .running:
+            return ("hourglass", .blue, "执行中…")
+        case .awaitingApproval:
+            return ("exclamationmark.shield.fill", .orange, "需要授权")
+        case .complete:
+            return call.truncated
+                ? ("checkmark.circle", .secondary, "完成（结果已截断）")
+                : ("checkmark.circle.fill", .green, "完成")
+        case .error:
+            return ("xmark.octagon.fill", .red, "失败")
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Button {
                 withAnimation(.snappy) { expanded.toggle() }
             } label: {
                 HStack(spacing: 6) {
-                    Image(systemName: "gearshape.fill")
+                    Image(systemName: statusBadge.icon)
                         .font(.caption2)
-                        .foregroundStyle(.tint)
-                    Text("工具调用: \(call.name)")
+                        .foregroundStyle(statusBadge.tint)
+                    Text("工具调用: \(call.title ?? call.name)")
                         .font(.caption.weight(.semibold))
+                    Text("· \(statusBadge.label)")
+                        .font(.caption2)
+                        .foregroundStyle(statusBadge.tint)
                     Spacer()
                     Image(systemName: expanded ? "chevron.up" : "chevron.down")
                         .font(.caption2)
@@ -159,27 +266,27 @@ struct ToolCallChip: View {
 
             if expanded {
                 Group {
-                    Text("参数")
-                        .fontWeight(.semibold)
                     Text(prettyArguments)
                         .font(.system(.caption2, design: .monospaced))
+                        .foregroundStyle(.secondary)
                     if let result = call.result {
-                        Text("结果")
-                            .fontWeight(.semibold)
                         Text(result)
                             .font(.system(.caption2, design: .monospaced))
-                            .lineLimit(12)
+                            .foregroundStyle(call.status == .error ? .red : .secondary)
+                            .lineLimit(call.truncated ? 24 : 12)
                     }
                 }
-                .foregroundStyle(.secondary)
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
         .padding(10)
-        .background(.ultraThinMaterial, in: .rect(cornerRadius: 14))
+        .glassEffect(.regular, in: .rect(cornerRadius: 14))
         .overlay(
             RoundedRectangle(cornerRadius: 14)
-                .strokeBorder(.quaternary, lineWidth: 1)
+                .strokeBorder(
+                    call.status == .error ? AnyShapeStyle(Color.red.opacity(0.4)) : AnyShapeStyle(.quaternary),
+                    lineWidth: 1
+                )
         )
     }
 
@@ -235,7 +342,7 @@ struct ThinkSection: View {
             }
         }
         .padding(10)
-        .background(.ultraThinMaterial, in: .rect(cornerRadius: 14))
+        .glassEffect(.regular, in: .rect(cornerRadius: 14))
         .overlay(
             RoundedRectangle(cornerRadius: 14)
                 .strokeBorder(.quaternary, lineWidth: 1)

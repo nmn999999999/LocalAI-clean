@@ -1,0 +1,653 @@
+import SwiftUI
+import PhotosUI
+#if canImport(UIKit)
+import UIKit
+#endif
+
+/// 服务页：Provider 管理 / 自定义助手 / 数据备份与 QR 分享
+/// （Provider 管理、自定义助手、QR 分享、数据备份）
+struct ProvidersView: View {
+    @EnvironmentObject private var chatStore: ChatStore
+    @ObservedObject private var providerStore = ProviderStore.shared
+    @ObservedObject private var assistantStore = AssistantStore.shared
+
+    @State private var editingProvider: ChatProvider?
+    @State private var addingProvider = false
+    @State private var editingAssistant: AIAssistant?
+    @State private var addingAssistant = false
+    @State private var sharingProvider: ChatProvider?
+    @State private var shareItems: [Any] = []
+    @State private var showShareSheet = false
+    @State private var showDocumentPicker = false
+    @State private var pendingRestore: BackupService.BackupPackage?
+    @State private var showRestoreConfirm = false
+    @State private var showImportPhotoPicker = false
+    @State private var importPhotoItems: [PhotosPickerItem] = []
+    @State private var toastMessage: String?
+    @State private var testingProviderID: UUID?
+    /// MCP
+    @ObservedObject private var mcpService = MCPService.shared
+    @State private var editingMCPServer: MCPServer?
+    @State private var addingMCPServer = false
+    @State private var callingTool: (server: MCPServer, tool: MCPTool)?
+
+    var body: some View {
+        NavigationStack {
+            List {
+                providerSection
+                assistantSection
+                mcpSection
+                backupSection
+                aboutSection
+            }
+            .navigationTitle(t("服务"))
+            .toolbar {
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    Button {
+                        addingProvider = true
+                    } label: {
+                        Image(systemName: "plus")
+                            .accessibilityLabel(t("添加 Provider"))
+                    }
+                    Menu {
+                        Button(t("重置内置"), systemImage: "arrow.counterclockwise") {
+                            providerStore.resetBuiltIns()
+                        }
+                        Button(t("扫码导入"), systemImage: "qrcode.viewfinder") {
+                            showImportPhotoPicker = true
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                            .accessibilityLabel(t("更多"))
+                    }
+                }
+            }
+            .sheet(isPresented: $addingProvider) {
+                ProviderEditSheet()
+            }
+            .sheet(item: $editingProvider) { p in
+                ProviderEditSheet(existing: p)
+            }
+            .sheet(isPresented: $addingAssistant) {
+                AssistantEditSheet()
+            }
+            .sheet(item: $editingAssistant) { a in
+                AssistantEditSheet(existing: a)
+            }
+            .sheet(isPresented: $showShareSheet) {
+                ShareSheet(items: shareItems)
+            }
+            .sheet(item: $sharingProvider) { p in
+                ProviderQRShareSheet(provider: p)
+            }
+            .sheet(isPresented: $showDocumentPicker) {
+                DocumentPicker { data in
+                    handleRestore(data: data)
+                }
+            }
+            .sheet(isPresented: $showImportPhotoPicker) {
+                importPhotoPicker
+            }
+            .confirmationDialog(
+                t("恢复将覆盖当前数据，确认继续？"),
+                isPresented: $showRestoreConfirm,
+                titleVisibility: .visible
+            ) {
+                Button(t("确认恢复"), role: .destructive) {
+                    if let pkg = pendingRestore {
+                        BackupService.restore(pkg, chatStore: chatStore)
+                        toast(t("恢复成功"))
+                    }
+                }
+                Button(t("取消"), role: .cancel) {}
+            }
+            .overlay(alignment: .bottom) {
+                if let toastMessage {
+                    Text(toastMessage)
+                        .font(.subheadline.weight(.medium))
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 10)
+                        .background(.ultraThinMaterial, in: .capsule)
+                        .padding(.bottom, 12)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+            }
+            .animation(.snappy, value: toastMessage)
+        }
+    }
+
+    // MARK: - Provider 列表
+
+    private var providerSection: some View {
+        Section {
+            ForEach(providerStore.providers) { provider in
+                ProviderRow(
+                    provider: provider,
+                    isSelected: providerStore.currentProviderID == provider.id,
+                    isTesting: testingProviderID == provider.id,
+                    onSelect: {
+                        let model = providerStore.currentModel
+                        let keepModel = provider.models.contains(model) ? model : (provider.models.first ?? "")
+                        providerStore.select(providerID: provider.id, model: keepModel)
+                    },
+                    onEdit: { editingProvider = provider },
+                    onShare: { sharingProvider = provider },
+                    onTest: { testProvider(provider) },
+                    onDelete: { providerStore.delete(provider) }
+                )
+            }
+        } header: {
+            Text(t("Provider 管理"))
+        } footer: {
+            Text("选中即切换聊天使用的云端模型；支持多 Key 自动轮换、自定义请求头与请求体")
+                .font(.caption2)
+        }
+    }
+
+    // MARK: - 助手列表
+
+    private var assistantSection: some View {
+        Section {
+            ForEach(assistantStore.assistants) { assistant in
+                Button {
+                    assistantStore.currentAssistantID = assistant.id
+                } label: {
+                    HStack(spacing: 12) {
+                        Text(assistant.emoji.isEmpty ? "🤖" : assistant.emoji)
+                            .font(.title2)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(assistant.name)
+                                .font(.subheadline.weight(.medium))
+                            Text(systemPromptPreview(assistant.systemPrompt))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                        Spacer()
+                        if assistantStore.currentAssistantID == assistant.id {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundStyle(.tint)
+                        }
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .swipeActions(edge: .trailing) {
+                    Button(t("删除"), role: .destructive) {
+                        assistantStore.delete(assistant)
+                    }
+                    Button(t("编辑")) {
+                        editingAssistant = assistant
+                    }
+                    .tint(.blue)
+                }
+            }
+        } header: {
+            HStack {
+                Text(t("自定义助手"))
+                Spacer()
+                Button {
+                    addingAssistant = true
+                } label: {
+                    Label(t("添加"), systemImage: "plus")
+                        .font(.caption)
+                }
+            }
+        } footer: {
+            Text("聊天时助手的系统提示词将自动注入，并支持 {model} {date} 等变量")
+                .font(.caption2)
+        }
+    }
+
+    // MARK: - MCP 工具
+
+    private var mcpSection: some View {
+        Section {
+            if mcpService.servers.isEmpty {
+                Text("未添加 MCP 服务器。连接后工具自动加入 Agent 工具目录。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            ForEach(mcpService.servers) { server in
+                MCPServerRow(
+                    server: server,
+                    isConnecting: mcpService.connectingID == server.id,
+                    onEdit: { editingMCPServer = server },
+                    onConnect: {
+                        Task { await mcpService.connect(server) }
+                    },
+                    onDisconnect: { mcpService.disconnect(server) },
+                    onDelete: { mcpService.delete(server) },
+                    onCallTool: { tool in
+                        callingTool = (server, tool)
+                    }
+                )
+            }
+        } header: {
+            HStack {
+                Text("MCP 工具")
+                Spacer()
+                Button {
+                    addingMCPServer = true
+                } label: {
+                    Label(t("添加"), systemImage: "plus")
+                        .font(.caption)
+                }
+            }
+        } footer: {
+            Text("Model Context Protocol：连接外部 MCP 服务器，把它的工具接入 Agent 对话循环（OpenAI/Gemini/Claude/本地模型均可用）")
+                .font(.caption2)
+        }
+        .sheet(isPresented: $addingMCPServer) {
+            MCPServerEditSheet()
+        }
+        .sheet(item: $editingMCPServer) { server in
+            MCPServerEditSheet(existing: server)
+        }
+        .sheet(item: Binding(
+            get: { callingTool.map { MCPToolCallKey(server: $0.server, tool: $0.tool) } },
+            set: { if $0 == nil { callingTool = nil } }
+        )) { key in
+            MCPToolCallSheet(server: key.server, tool: key.tool)
+        }
+    }
+
+    // MARK: - 备份
+
+    private var backupSection: some View {
+        Section {
+            Button {
+                if let url = BackupService.makeBackupFile(chatStore: chatStore) {
+                    shareItems = [url]
+                    showShareSheet = true
+                }
+            } label: {
+                Label(t("导出备份"), systemImage: "square.and.arrow.up")
+            }
+
+            Button {
+                showDocumentPicker = true
+            } label: {
+                Label(t("恢复备份"), systemImage: "arrow.down.doc")
+            }
+
+            Button {
+                if let json = ProviderShareCodec.export(providerStore.providers) {
+                    shareItems = [json]
+                    showShareSheet = true
+                }
+            } label: {
+                Label(t("分享 Provider 配置"), systemImage: "qrcode")
+            }
+        } header: {
+            Text(t("数据备份"))
+        } footer: {
+            Text(t("导出备份将包含全部会话、Provider 与助手配置"))
+                .font(.caption2)
+        }
+    }
+
+    // MARK: - 关于
+
+    private var aboutSection: some View {
+        Section {
+            HStack {
+                Text(t("关于"))
+                Spacer()
+                Text("LocalAI")
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    // MARK: - 相册扫码导入
+
+    private var importPhotoPicker: some View {
+        VStack(spacing: 14) {
+            Text(t("从相册选择二维码图片导入 Provider 配置"))
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.top, 24)
+            PhotosPicker(selection: $importPhotoItems, maxSelectionCount: 1, matching: .images) {
+                Label(t("扫码导入"), systemImage: "qrcode.viewfinder")
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 10)
+                    .background(.tint, in: .capsule)
+                    .foregroundStyle(.white)
+            }
+            .buttonStyle(.plain)
+            .onChange(of: importPhotoItems) { _, items in
+                Task {
+                    await importFromPhoto(items)
+                }
+            }
+            Spacer()
+        }
+        .presentationDetents([.medium])
+    }
+
+    private func importFromPhoto(_ items: [PhotosPickerItem]) async {
+        defer {
+            importPhotoItems = []
+            showImportPhotoPicker = false
+        }
+        guard let item = items.first,
+              let data = try? await item.loadTransferable(type: Data.self),
+              let image = UIImage(data: data)
+        else { return }
+        guard let text = QRCodeGenerator.decode(image: image) else {
+            toast(t("未识别到二维码"))
+            return
+        }
+        let providers = ProviderShareCodec.parseImport(text)
+        guard !providers.isEmpty else {
+            toast(t("未识别到二维码"))
+            return
+        }
+        for p in providers {
+            providerStore.upsert(p)
+        }
+        toast("\(t("导入成功")) (\(providers.count))")
+    }
+
+    // MARK: - 测试连接
+
+    private func testProvider(_ provider: ChatProvider) {
+        testingProviderID = provider.id
+        let probe = CloudMessage(role: .user, content: "ping")
+        Task {
+            defer { testingProviderID = nil }
+            do {
+                let model = provider.models.first ?? "gpt-4o-mini"
+                let reply = try await CloudChatClient.complete(
+                    provider: provider,
+                    model: model,
+                    messages: [probe],
+                    temperature: 0,
+                    maxTokens: 8
+                )
+                toast("\(t("连接成功")) · \(reply.prefix(40))")
+            } catch {
+                toast("\(t("连接失败")): \(error.localizedDescription.prefix(80))")
+            }
+        }
+    }
+
+    private func handleRestore(data: Data) {
+        do {
+            let pkg = try BackupService.parseBackup(data: data)
+            pendingRestore = pkg
+            showRestoreConfirm = true
+        } catch {
+            toast("\(t("恢复失败")): \(error.localizedDescription)")
+        }
+    }
+
+    private func systemPromptPreview(_ prompt: String) -> String {
+        let s = prompt.replacingOccurrences(of: "\n", with: " ")
+        return s.count > 60 ? String(s.prefix(60)) + "…" : s
+    }
+
+    private func toast(_ message: String) {
+        withAnimation(.snappy) {
+            toastMessage = message
+        }
+        Task {
+            try? await Task.sleep(nanoseconds: 2_200_000_000)
+            withAnimation(.snappy) { toastMessage = nil }
+        }
+    }
+}
+
+// MARK: - Provider 行
+
+private struct ProviderRow: View {
+    let provider: ChatProvider
+    let isSelected: Bool
+    let isTesting: Bool
+    let onSelect: () -> Void
+    let onEdit: () -> Void
+    let onShare: () -> Void
+    let onTest: () -> Void
+    let onDelete: () -> Void
+
+    var body: some View {
+        Button(action: onSelect) {
+            HStack(spacing: 12) {
+                Image(systemName: iconName)
+                    .font(.title3)
+                    .foregroundStyle(.tint)
+                    .frame(width: 34, height: 34)
+                    .background(.tint.opacity(0.12), in: .rect(cornerRadius: 9))
+
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 6) {
+                        Text(provider.name)
+                            .font(.subheadline.weight(.semibold))
+                        if provider.isBuiltIn {
+                            Text(t("内置"))
+                                .font(.caption2)
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 1)
+                                .background(.quaternary, in: .capsule)
+                                .foregroundStyle(.secondary)
+                        }
+                        if !provider.enabled {
+                            Text("OFF")
+                                .font(.caption2.weight(.bold))
+                                .foregroundStyle(.orange)
+                        }
+                    }
+                    Text(provider.cleanBaseURL.isEmpty ? provider.type.displayName : provider.cleanBaseURL)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                    Text(keyStatus)
+                        .font(.caption2)
+                        .foregroundStyle(provider.hasKey ? .green : .orange)
+                }
+                Spacer()
+
+                if isTesting {
+                    ProgressView()
+                        .controlSize(.mini)
+                }
+                if isSelected {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(.tint)
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .contextMenu {
+            Button(t("编辑"), systemImage: "pencil") { onEdit() }
+            Button(t("测试连接"), systemImage: "bolt") { onTest() }
+            Button(t("导出配置"), systemImage: "qrcode") { onShare() }
+            if !provider.isBuiltIn {
+                Divider()
+                Button(t("删除"), systemImage: "trash", role: .destructive) { onDelete() }
+            }
+        }
+    }
+
+    private var iconName: String {
+        switch provider.type {
+        case .openAI: return "sparkles"
+        case .openAICompatible: return "server.rack"
+        case .gemini: return "star.circle"
+        case .claude: return "leaf"
+        }
+    }
+
+    private var keyStatus: String {
+        let n = provider.apiKeys.filter { !$0.isEmpty }.count
+        if n > 0 {
+            return t("已配置 N 个密钥").replacingOccurrences(of: "N", with: "\(n)")
+        }
+        return t("未配置密钥")
+    }
+}
+
+// MARK: - Provider 二维码分享
+
+struct ProviderQRShareSheet: View {
+    let provider: ChatProvider
+    @Environment(\.dismiss) private var dismiss
+    @State private var qrImage: UIImage?
+
+    var body: some View {
+        VStack(spacing: 16) {
+            Text(t("配置二维码"))
+                .font(.headline)
+                .padding(.top, 24)
+
+            if let qrImage {
+                Image(uiImage: qrImage)
+                    .interpolation(.none)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 240, height: 240)
+                    .padding(12)
+                    .background(.white, in: .rect(cornerRadius: 16))
+            } else {
+                ProgressView()
+                    .frame(height: 260)
+            }
+
+            Text(provider.name)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+
+            Button {
+                if let json = ProviderShareCodec.export([provider]) {
+                    UIPasteboard.general.string = json
+                    dismiss()
+                }
+            } label: {
+                Label(t("复制配置文本"), systemImage: "doc.on.doc")
+            }
+            .buttonStyle(.bordered)
+
+            Spacer()
+        }
+        .presentationDetents([.medium])
+        .onAppear {
+            if let json = ProviderShareCodec.export([provider]) {
+                qrImage = QRCodeGenerator.generate(from: json)
+            }
+        }
+    }
+}
+
+// MARK: - MCP 服务器行
+
+private struct MCPServerRow: View {
+    let server: MCPServer
+    let isConnecting: Bool
+    let onEdit: () -> Void
+    let onConnect: () -> Void
+    let onDisconnect: () -> Void
+    let onDelete: () -> Void
+    let onCallTool: (MCPTool) -> Void
+
+    @State private var expanded = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button {
+                withAnimation(.snappy) { expanded.toggle() }
+            } label: {
+                HStack(spacing: 12) {
+                    Image(systemName: server.connected ? "link.circle.fill" : "link.circle")
+                        .font(.title3)
+                        .foregroundStyle(server.connected ? .green : .secondary)
+                        .frame(width: 34, height: 34)
+                        .background(.quaternary.opacity(0.5), in: .rect(cornerRadius: 9))
+
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(server.name)
+                            .font(.subheadline.weight(.semibold))
+                        Text(server.url)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                        Text(statusText)
+                            .font(.caption2)
+                            .foregroundStyle(server.connected ? .green : .orange)
+                    }
+                    Spacer()
+                    if isConnecting {
+                        ProgressView().controlSize(.mini)
+                    } else {
+                        Image(systemName: expanded ? "chevron.up" : "chevron.down")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if expanded {
+                VStack(alignment: .leading, spacing: 6) {
+                    if server.tools.isEmpty {
+                        Text(server.connected ? "该服务器没有暴露工具" : "未连接，无工具列表")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    ForEach(server.tools) { tool in
+                        HStack(spacing: 8) {
+                            Image(systemName: "wrench.and.screwdriver")
+                                .font(.caption)
+                                .foregroundStyle(.tint)
+                            Text(tool.name)
+                                .font(.caption.weight(.medium))
+                            Spacer()
+                            Button(t("调用")) {
+                                onCallTool(tool)
+                            }
+                            .font(.caption2)
+                            .buttonStyle(.bordered)
+                            .controlSize(.mini)
+                        }
+                        .padding(.vertical, 2)
+                    }
+                }
+                .padding(.leading, 46)
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+        .padding(10)
+        .background(.ultraThinMaterial, in: .rect(cornerRadius: 14))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14)
+                .strokeBorder(.quaternary, lineWidth: 1)
+        )
+        .contextMenu {
+            Button(t("编辑"), systemImage: "pencil") { onEdit() }
+            if server.connected {
+                Button(t("断开"), systemImage: "xmark.circle") { onDisconnect() }
+            } else {
+                Button(t("连接"), systemImage: "link") { onConnect() }
+            }
+            Divider()
+            Button(t("删除"), systemImage: "trash", role: .destructive) { onDelete() }
+        }
+    }
+
+    private var statusText: String {
+        if isConnecting { return t("正在测试…") }
+        if server.connected { return "已连接 · \(server.tools.count) 个工具" }
+        if let err = server.lastError, !err.isEmpty { return "未连接 · \(err.prefix(40))" }
+        return t("未配置密钥").replacingOccurrences(of: "密钥", with: "连接")
+    }
+}
+
+/// sheet(item:) 用包装：MCP 服务器 + 工具
+struct MCPToolCallKey: Identifiable {
+    let id = UUID()
+    let server: MCPServer
+    let tool: MCPTool
+}

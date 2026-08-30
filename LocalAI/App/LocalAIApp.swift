@@ -7,6 +7,7 @@ struct LocalAIApp: App {
     @StateObject private var llmService = LLMService()
     @StateObject private var chatStore = ChatStore()
     @StateObject private var agentService = AgentService()
+    @StateObject private var theme = ThemeObserver()
     /// 监听「默认模型下载完成」信号的订阅（下载是异步的，完成后据此自动加载）。
     @State private var defaultDownloadCancellable: AnyCancellable?
 
@@ -17,7 +18,25 @@ struct LocalAIApp: App {
                 .environmentObject(llmService)
                 .environmentObject(chatStore)
                 .environmentObject(agentService)
-                .task { await autoLoadLastModel() }
+                .environmentObject(theme)
+                .tint(theme.current.accentColor)
+                .preferredColorScheme(theme.current.preferredColorScheme)
+                .task {
+                    await autoLoadLastModel()
+                    // 滚动更新：启动静默检查 GitHub Release（按设置开关 + 间隔节流）
+                    if SettingsStorage.shared.settings.autoCheckUpdate {
+                        await UpdateCheckerService.shared.checkIfNeeded()
+                    }
+                }
+        }
+    }
+
+    /// ThemeObserver 是 AppStorage 包装,主题变更时通知整个视图树重新 .tint(...)
+    final class ThemeObserver: ObservableObject {
+        @AppStorage("appTheme") var raw: String = AppTheme.system.rawValue
+        var current: AppTheme {
+            get { AppTheme(rawValue: raw) ?? .system }
+            set { raw = newValue.rawValue; objectWillChange.send() }
         }
     }
 

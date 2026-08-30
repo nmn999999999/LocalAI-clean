@@ -274,7 +274,9 @@ final class ModelManager: ObservableObject {
 
     private func loadIndex() {
         if let data = try? Data(contentsOf: indexURL) {
-            let list = try? JSONDecoder().decode([StoredModel].self, from: data)
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601 // 与 saveIndex 一致，否则 addedAt 解码失败导致索引被清空
+            let list = try? decoder.decode([StoredModel].self, from: data)
             downloadedModels = list ?? []
         }
         // 自动检测：把目录里未被索引的 .gguf 文件补进来

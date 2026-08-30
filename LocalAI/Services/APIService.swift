@@ -101,24 +101,23 @@ final class APIService: ObservableObject {
                 return
             }
             
-            // 处理流式响应
-            var buffer = ""
+            // 处理流式响应（UTF-8 安全：整行解码，避免逐字节转 Character 破坏非 ASCII）
+            var data = Data()
             for try await byte in bytes {
-                buffer.append(Character(UnicodeScalar(byte)))
-                
-                // 按行处理 SSE 数据
-                while let newlineRange = buffer.range(of: "\n") {
-                    let line = String(buffer[buffer.startIndex..<newlineRange.lowerBound])
-                    buffer = String(buffer[newlineRange.upperBound...])
-                    
+                data.append(byte)
+                while let nl = data.firstIndex(of: 0x0A) {
+                    let lineData = data[data.startIndex..<nl]
+                    data = Data(data[data.index(after: nl)...])
+                    let line = String(data: lineData, encoding: .utf8) ?? ""
+
                     if line.hasPrefix("data: ") {
-                        let data = String(line.dropFirst(6))
-                        if data == "[DONE]" {
+                        let payload = String(line.dropFirst(6))
+                        if payload == "[DONE]" {
                             continuation.finish()
                             return
                         }
-                        
-                        if let jsonData = data.data(using: .utf8),
+
+                        if let jsonData = payload.data(using: .utf8),
                            let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
                            let choices = json["choices"] as? [[String: Any]],
                            let firstChoice = choices.first,
@@ -129,7 +128,22 @@ final class APIService: ObservableObject {
                     }
                 }
             }
-            
+
+            // 末尾残留数据（无换行结尾）
+            if let tail = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespaces),
+               tail.hasPrefix("data: ") {
+                let payload = String(tail.dropFirst(6))
+                if payload != "[DONE]",
+                   let jsonData = payload.data(using: .utf8),
+                   let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
+                   let choices = json["choices"] as? [[String: Any]],
+                   let firstChoice = choices.first,
+                   let delta = firstChoice["delta"] as? [String: Any],
+                   let content = delta["content"] as? String {
+                    continuation.yield(content)
+                }
+            }
+
             continuation.finish()
             
         } catch {
