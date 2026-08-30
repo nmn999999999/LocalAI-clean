@@ -334,10 +334,11 @@ struct ChatView: View {
         VStack(spacing: 6) {
             // 可展开的工具岛（默认折叠，展开后位于主输入栏上方，GlassEffect 同一容器保持视觉连贯）
             if showTools {
-                // 工具岛（v0.3.30）：4 个 .glass 按钮在 iOS 26.1 真机上间距 10 会粘成一片
+                // 工具岛（v0.3.31）：4 个 .glass 按钮在 iOS 26.1 真机上间距 10 会粘成一片
                 // （玻璃合并，spacing 语义不可靠 —— v0.3.10/20/21 多次证实）。
                 // 改回 v0.3.12/22 真机验证过的 Material 方案：单一材质胶囊承载图标按钮，
                 // 材质与玻璃不同层、天然独立不粘连；按钮 44pt 与主输入行对齐，间距 18 不再紧贴。
+                // 每个图标固定纯色（蓝/橙/绿/红）；激活时实心色圈 + 白色图标 → 切换状态颜色反馈清晰。
                 HStack(spacing: 18) {
                     PhotosPicker(
                         selection: $selectedItems,
@@ -345,22 +346,28 @@ struct ChatView: View {
                         matching: .images
                     ) {
                         Image(systemName: "photo.on.rectangle.angled")
+                            .font(.system(size: 17, weight: .semibold))
+                            .foregroundStyle(.blue)
+                            .frame(width: 44, height: 44)
+                            .background(.blue.opacity(0.15), in: Circle())
                             .accessibilityLabel(t("添加图片"))
                     }
                     .buttonStyle(.plain)
-                    .frame(width: 44, height: 44)
                     .opacity(canChat ? 1 : 0.35)
 
                     Button {
                         withAnimation(.bouncy) { isAgentMode.toggle() }
                     } label: {
                         Image(systemName: isAgentMode ? "wand.and.stars" : "terminal")
+                            .font(.system(size: 17, weight: .semibold))
                             .symbolEffect(.bounce, value: isAgentMode)
+                            .foregroundStyle(isAgentMode ? Color.white : Color.orange)
+                            .frame(width: 44, height: 44)
+                            .background(isAgentMode ? Color.orange : Color.orange.opacity(0.15), in: Circle())
                             .accessibilityLabel(t("Agent 模式"))
                     }
                     .buttonStyle(.plain)
-                    .frame(width: 44, height: 44)
-                    .tint(isAgentMode ? .orange : nil)
+                    .disabled(!llmService.isModelReady)
                     .opacity(llmService.isModelReady ? 1 : 0.35)
 
                     if providerStore.hasCloudSelection {
@@ -368,24 +375,28 @@ struct ChatView: View {
                             withAnimation(.bouncy) { webSearchOn.toggle() }
                         } label: {
                             Image(systemName: webSearchOn ? "globe.asia.australia.fill" : "globe.asia.australia")
+                                .font(.system(size: 17, weight: .semibold))
                                 .symbolEffect(.bounce, value: webSearchOn)
+                                .foregroundStyle(webSearchOn ? Color.white : Color.green)
+                                .frame(width: 44, height: 44)
+                                .background(webSearchOn ? Color.green : Color.green.opacity(0.15), in: Circle())
                                 .accessibilityLabel(t("联网搜索"))
                         }
                         .buttonStyle(.plain)
-                        .frame(width: 44, height: 44)
-                        .tint(webSearchOn ? .blue : nil)
                     }
 
                     Button {
                         toggleVoiceInput()
                     } label: {
                         Image(systemName: asrService.isListening ? "mic.fill" : "mic")
+                            .font(.system(size: 17, weight: .semibold))
                             .symbolEffect(.pulse, isActive: asrService.isListening)
+                            .foregroundStyle(asrService.isListening ? Color.white : Color.red)
+                            .frame(width: 44, height: 44)
+                            .background(asrService.isListening ? Color.red : Color.red.opacity(0.15), in: Circle())
                             .accessibilityLabel(t("语音输入"))
                     }
                     .buttonStyle(.plain)
-                    .frame(width: 44, height: 44)
-                    .tint(asrService.isListening ? .red : nil)
                 }
                 .padding(.horizontal, 18)
                 .padding(.vertical, 8)

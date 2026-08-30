@@ -634,9 +634,16 @@ struct SettingsView: View {
                                 .font(.subheadline.weight(.semibold))
                                 .foregroundStyle(.green)
                         } else if updater.lastChecked {
-                            Text("已是最新版本")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                            if let err = updater.lastError {
+                                // 检查失败与「已是最新」分开显示，避免误导
+                                Text("检查失败：\(err)")
+                                    .font(.caption)
+                                    .foregroundStyle(.orange)
+                            } else {
+                                Text("已是最新版本")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
                         }
                     }
                     Spacer()

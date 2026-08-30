@@ -15,6 +15,8 @@ final class UpdateCheckerService: ObservableObject {
     @Published private(set) var downloadURL: URL?
     @Published private(set) var isChecking = false
     @Published private(set) var lastChecked = false
+    /// 最近一次检查失败的原因（nil = 成功或尚未检查）。UI 用它区分「已是最新」与「检查失败」。
+    @Published private(set) var lastError: String?
 
     private let repoAPI = "https://api.github.com/repos/nmn999999999/LocalAI-clean/releases/latest"
     private let lastCheckKey = "update_last_check_ts"
@@ -39,22 +41,32 @@ final class UpdateCheckerService: ObservableObject {
         await check()
     }
 
-    /// 执行检查（手动 / 自动）
+    /// 执行检查（手动 / 自动）。失败时记录 lastError，UI 显示「检查失败」而非误导性的「已是最新」。
     func check() async {
         guard !isChecking else { return }
         isChecking = true
         defer { isChecking = false }
         defer { lastChecked = true }
 
-        guard let url = URL(string: repoAPI) else { return }
+        guard let url = URL(string: repoAPI) else {
+            lastError = "无效的更新地址"
+            return
+        }
         var request = URLRequest(url: url)
         request.timeoutInterval = 15
         request.setValue("LocalAI-iOS/\(currentVersion)", forHTTPHeaderField: "User-Agent")
 
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
-            guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else { return }
-            guard let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return }
+            guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+                let code = (response as? HTTPURLResponse)?.statusCode ?? -1
+                lastError = "服务器响应异常 (HTTP \(code))"
+                return
+            }
+            guard let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+                lastError = "响应解析失败"
+                return
+            }
 
             latestTag = json["tag_name"] as? String
             latestName = json["name"] as? String
@@ -74,9 +86,10 @@ final class UpdateCheckerService: ObservableObject {
                     }
                 }
             }
+            lastError = nil   // 成功
             UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: lastCheckKey)
         } catch {
-            // 网络失败静默（用户手动检查时可通过 UI 感知无响应）
+            lastError = "网络请求失败: \(error.localizedDescription.prefix(60))"
         }
     }
 
