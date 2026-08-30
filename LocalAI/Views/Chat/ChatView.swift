@@ -334,10 +334,11 @@ struct ChatView: View {
         VStack(spacing: 6) {
             // 可展开的工具岛（默认折叠，展开后位于主输入栏上方，GlassEffect 同一容器保持视觉连贯）
             if showTools {
-                // M2 修复(Apple 官方文档 Best Practices #1):多玻璃视图必须用
-                // GlassEffectContainer 包裹以获得性能和 morphing 能力。
-                GlassEffectContainer(spacing: 10) {
-                    HStack(spacing: 10) {
+                // 工具岛（v0.3.30）：4 个 .glass 按钮在 iOS 26.1 真机上间距 10 会粘成一片
+                // （玻璃合并，spacing 语义不可靠 —— v0.3.10/20/21 多次证实）。
+                // 改回 v0.3.12/22 真机验证过的 Material 方案：单一材质胶囊承载图标按钮，
+                // 材质与玻璃不同层、天然独立不粘连；按钮 44pt 与主输入行对齐，间距 18 不再紧贴。
+                HStack(spacing: 18) {
                     PhotosPicker(
                         selection: $selectedItems,
                         maxSelectionCount: 3,
@@ -346,8 +347,8 @@ struct ChatView: View {
                         Image(systemName: "photo.on.rectangle.angled")
                             .accessibilityLabel(t("添加图片"))
                     }
-                    .buttonStyle(.glass)
-                    .frame(width: 40, height: 40)
+                    .buttonStyle(.plain)
+                    .frame(width: 44, height: 44)
                     .opacity(canChat ? 1 : 0.35)
 
                     Button {
@@ -357,8 +358,8 @@ struct ChatView: View {
                             .symbolEffect(.bounce, value: isAgentMode)
                             .accessibilityLabel(t("Agent 模式"))
                     }
-                    .buttonStyle(.glass)
-                    .frame(width: 40, height: 40)
+                    .buttonStyle(.plain)
+                    .frame(width: 44, height: 44)
                     .tint(isAgentMode ? .orange : nil)
                     .opacity(llmService.isModelReady ? 1 : 0.35)
 
@@ -370,8 +371,8 @@ struct ChatView: View {
                                 .symbolEffect(.bounce, value: webSearchOn)
                                 .accessibilityLabel(t("联网搜索"))
                         }
-                        .buttonStyle(.glass)
-                        .frame(width: 40, height: 40)
+                        .buttonStyle(.plain)
+                        .frame(width: 44, height: 44)
                         .tint(webSearchOn ? .blue : nil)
                     }
 
@@ -382,15 +383,16 @@ struct ChatView: View {
                             .symbolEffect(.pulse, isActive: asrService.isListening)
                             .accessibilityLabel(t("语音输入"))
                     }
-                    .buttonStyle(.glass)
-                    .frame(width: 40, height: 40)
+                    .buttonStyle(.plain)
+                    .frame(width: 44, height: 44)
                     .tint(asrService.isListening ? .red : nil)
-
-                    Spacer(minLength: 0)
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.top, 8)
                 }
+                .padding(.horizontal, 18)
+                .padding(.vertical, 8)
+                .background(.regularMaterial, in: .rect(cornerRadius: 22))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 14)
+                .padding(.top, 8)
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
 
