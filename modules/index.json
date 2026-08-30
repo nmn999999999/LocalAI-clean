@@ -1,0 +1,16 @@
+{
+  "modules": [
+    {
+      "id": "string-tools",
+      "name": "字符串工具包",
+      "version": "1.0.0",
+      "description": "字符串处理工具集：反转 / ROT13 / 词频统计 / 回文检测（示例 JS 插件）",
+      "author": "LocalAI",
+      "minAppVersion": "0.3.36",
+      "files": {
+        "manifest": "https://raw.githubusercontent.com/nmn999999999/LocalAI-clean/main/modules/string-tools/manifest.json",
+        "tools": "https://raw.githubusercontent.com/nmn999999999/LocalAI-clean/main/modules/string-tools/tools.js"
+      }
+    }
+  ]
+}

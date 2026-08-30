@@ -37,6 +37,7 @@ struct ProvidersView: View {
                 providerSection
                 assistantSection
                 mcpSection
+                pluginSection
                 backupSection
                 aboutSection
             }
@@ -275,6 +276,33 @@ struct ProvidersView: View {
             set: { if $0 == nil { callingTool = nil } }
         )) { key in
             MCPToolCallSheet(server: key.server, tool: key.tool)
+        }
+    }
+
+    // MARK: - 模块（JS 插件）
+
+    private var pluginSection: some View {
+        Section {
+            NavigationLink {
+                PluginsView()
+            } label: {
+                HStack(spacing: 10) {
+                    Image(systemName: "puzzlepiece.extension.fill")
+                        .font(.title3)
+                        .foregroundStyle(.tint)
+                        .frame(width: 34, height: 34)
+                        .background(.tint.opacity(0.12), in: .rect(cornerRadius: 9))
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("模块 / JS 插件")
+                            .font(.subheadline.weight(.semibold))
+                        Text("安装独立更新的工具模块（App 内更新，基础包不动）")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+        } header: {
+            Text("扩展")
         }
     }
 

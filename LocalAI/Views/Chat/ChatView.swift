@@ -686,7 +686,7 @@ struct ChatView: View {
                 let result = await agentService.run(
                     history: history,
                     settings: effectiveSettings,
-                    toolsEnabledTools: BuiltInTools.allTools + MCPService.shared.toolDefinitions,
+                    toolsEnabledTools: BuiltInTools.allTools + MCPService.shared.toolDefinitions + PluginManager.shared.installedToolDefinitions(),
                     llm: llmService,
                     bridge: bridge
                 )

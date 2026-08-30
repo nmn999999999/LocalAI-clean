@@ -499,6 +499,27 @@ enum BuiltInTools {
         }
     }
 
+    /// 全渠道执行：内置工具 → MCP（已连接服务器的工具）→ JS 插件 → 未知。
+    /// Agent 循环统一走这里，修复 MCP 工具无法执行的问题并支持插件工具。
+    /// @MainActor：访问 MCPService.shared / PluginManager.shared（MainActor 隔离单例）。
+    @MainActor
+    static func executeWithFallbacks(toolName: String, argumentsJSON: String) async -> String {
+        let builtin = await execute(toolName: toolName, argumentsJSON: argumentsJSON)
+        if !builtin.hasPrefix("未知工具:") { return builtin }
+
+        // MCP 工具（由已连接服务器暴露）
+        if MCPService.shared.server(forToolName: toolName) != nil {
+            return await MCPService.shared.callTool(name: toolName, argumentsJSON: argumentsJSON)
+        }
+
+        // JS 插件工具
+        if PluginManager.shared.hasTool(named: toolName) {
+            return await PluginManager.shared.callTool(name: toolName, argumentsJSON: argumentsJSON)
+        }
+
+        return builtin
+    }
+
     // MARK: - 工具实现
 
     private static func executeCalculator(arguments: [String: Any]) -> String {

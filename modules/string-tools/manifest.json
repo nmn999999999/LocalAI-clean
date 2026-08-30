@@ -1,0 +1,8 @@
+{
+  "id": "string-tools",
+  "name": "字符串工具包",
+  "version": "1.0.0",
+  "description": "字符串处理工具集：反转 / ROT13 / 词频统计 / 回文检测（示例 JS 插件）",
+  "author": "LocalAI",
+  "minAppVersion": "0.3.36"
+}

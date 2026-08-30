@@ -258,7 +258,7 @@ final class AgentService: ObservableObject {
                     record.status = .running
                     if let id = iterationID { bridge?.attachToolCall(id, record) }
 
-                    let result = await BuiltInTools.execute(toolName: call.name, argumentsJSON: argsJSON)
+                    let result = await BuiltInTools.executeWithFallbacks(toolName: call.name, argumentsJSON: argsJSON)
                     let limited = Self.limitResult(result)
                     record.result = limited
                     record.status = .complete
