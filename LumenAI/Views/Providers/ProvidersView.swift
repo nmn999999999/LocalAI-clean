@@ -356,7 +356,7 @@ struct ProvidersView: View {
             HStack {
                 Text(t("关于"))
                 Spacer()
-                Text("LocalAI")
+                Text("LumenAI")
                     .foregroundStyle(.secondary)
             }
         }

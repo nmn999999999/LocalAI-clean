@@ -13,7 +13,7 @@ extension ModelManager.StoredModel {
 struct ModelListView: View {
     @EnvironmentObject private var modelManager: ModelManager
     @EnvironmentObject private var llmService: LLMService
-    @EnvironmentObject private var theme: LocalAIApp.ThemeObserver
+    @EnvironmentObject private var theme: LumenAIApp.ThemeObserver
     @Environment(\.colorScheme) private var colorScheme
 
     @State private var showImporter = false

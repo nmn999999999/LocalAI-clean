@@ -152,7 +152,7 @@ final class PluginManager: ObservableObject {
         }
         var request = URLRequest(url: url)
         request.timeoutInterval = 15
-        request.setValue("LocalAI-iOS/plugin", forHTTPHeaderField: "User-Agent")
+        request.setValue("LumenAI-iOS/plugin", forHTTPHeaderField: "User-Agent")
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
             guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {

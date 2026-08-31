@@ -103,7 +103,7 @@ final class JSPluginEngine: @unchecked Sendable {
                 setupError = "无法创建 JS 上下文"
                 return
             }
-            ctx.name = "LocalAI-plugin-\(manifest.id)"
+            ctx.name = "LumenAI-plugin-\(manifest.id)"
             ctx.exceptionHandler = { _, exception in
                 let msg = exception?.toString() ?? "unknown"
                 print("[plugin:\(manifest.id)] JS exception: \(msg)")
@@ -213,7 +213,7 @@ final class JSPluginEngine: @unchecked Sendable {
         let newQueue = DispatchQueue(label: "localai.plugin.\(manifest.id).regen")
         newQueue.sync {
             guard let ctx = JSContext() else { return }
-            ctx.name = "LocalAI-plugin-\(self.manifest.id)"
+            ctx.name = "LumenAI-plugin-\(self.manifest.id)"
             ctx.exceptionHandler = { _, exception in
                 print("[plugin:\(self.manifest.id)] JS exception: \(exception?.toString() ?? "?")")
             }
@@ -452,7 +452,7 @@ enum PluginNativeBridge {
         }
         var request = URLRequest(url: url)
         request.timeoutInterval = 20
-        request.setValue("LocalAI-Plugin/1.0", forHTTPHeaderField: "User-Agent")
+        request.setValue("LumenAI-Plugin/1.0", forHTTPHeaderField: "User-Agent")
 
         Task.detached(priority: .userInitiated) {
             let result: (String?, String?)

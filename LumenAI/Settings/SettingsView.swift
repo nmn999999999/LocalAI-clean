@@ -3,7 +3,7 @@ import SwiftUI
 struct SettingsView: View {
     @EnvironmentObject private var llmService: LLMService
     @EnvironmentObject private var chatStore: ChatStore
-    @EnvironmentObject private var theme: LocalAIApp.ThemeObserver
+    @EnvironmentObject private var theme: LumenAIApp.ThemeObserver
     @Environment(\.colorScheme) private var colorScheme
     @ObservedObject private var storage = SettingsStorage.shared
 

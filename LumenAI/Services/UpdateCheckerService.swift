@@ -74,7 +74,7 @@ final class UpdateCheckerService: ObservableObject {
         }
         var request = URLRequest(url: url)
         request.timeoutInterval = 15
-        request.setValue("LocalAI-iOS/\(currentVersion)", forHTTPHeaderField: "User-Agent")
+        request.setValue("LumenAI-iOS/\(currentVersion)", forHTTPHeaderField: "User-Agent")
 
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
@@ -119,7 +119,7 @@ final class UpdateCheckerService: ObservableObject {
         guard let url = URL(string: UpdatePolicy.indexURL) else { return false }
         var request = URLRequest(url: url)
         request.timeoutInterval = 15
-        request.setValue("LocalAI-iOS/\(currentVersion)", forHTTPHeaderField: "User-Agent")
+        request.setValue("LumenAI-iOS/\(currentVersion)", forHTTPHeaderField: "User-Agent")
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
             guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
@@ -171,7 +171,7 @@ final class UpdateCheckerService: ObservableObject {
         guard let url = URL(string: repoAPI) else { return nil }
         var request = URLRequest(url: url)
         request.timeoutInterval = 15
-        request.setValue("LocalAI-iOS/\(currentVersion)", forHTTPHeaderField: "User-Agent")
+        request.setValue("LumenAI-iOS/\(currentVersion)", forHTTPHeaderField: "User-Agent")
         guard let (data, response) = try? await URLSession.shared.data(for: request),
               let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode),
               let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],

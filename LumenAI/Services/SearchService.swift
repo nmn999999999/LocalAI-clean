@@ -155,7 +155,7 @@ enum SearchService {
 
         var request = URLRequest(url: url)
         request.timeoutInterval = 10
-        request.setValue("LocalAI/1.0", forHTTPHeaderField: "User-Agent")
+        request.setValue("LumenAI/1.0", forHTTPHeaderField: "User-Agent")
 
         guard let (data, _) = try? await URLSession.shared.data(for: request),
               let arr = try? JSONSerialization.jsonObject(with: data) as? [Any],

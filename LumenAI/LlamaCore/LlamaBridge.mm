@@ -1,4 +1,4 @@
-// LlamaBridge.mm — self-contained llama.cpp + mtmd (multimodal) binding for LocalAI.
+// LlamaBridge.mm — self-contained llama.cpp + mtmd (multimodal) binding for LumenAI.
 // Drop-in replacement for the LLM.swift engine. Verified against Qwen2.5-VL-3B.
 
 #include "LlamaBridge.h"

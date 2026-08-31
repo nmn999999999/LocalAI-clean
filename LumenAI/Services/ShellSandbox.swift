@@ -26,7 +26,7 @@ enum ShellSandbox {
         "HOME": sandboxRoot,
         "USER": "mobile",
         "PWD": sandboxRoot,
-        "SHELL": "LocalAI-SandboxShell",
+        "SHELL": "LumenAI-SandboxShell",
         "PATH": "/bin:/usr/bin"  // 虚拟 PATH,本沙箱内置命令等价于"在 PATH 中"
     ]
 
@@ -248,7 +248,7 @@ enum ShellSandbox {
             // 内存压缩演示:生成一段可压缩文本,演示 LZ4.Box 内存容器
             var sample = ""
             for i in 0..<400 {
-                sample += "LocalAI 会话 #\(i) | 用户: 帮我压缩这段数据 | 助手: LZ4 内存压缩演示内容。"
+                sample += "LumenAI 会话 #\(i) | 用户: 帮我压缩这段数据 | 助手: LZ4 内存压缩演示内容。"
             }
             let box = LZ4.Box(Data(sample.utf8))
             let pct = String(format: "%.1f%%", (1 - Double(box.compressed.count) / Double(box.originalSize)) * 100)
@@ -483,7 +483,7 @@ enum ShellSandbox {
 
     private static func helpText() -> String {
         return """
-        LocalAI Shell 沙箱命令列表 (v0.3.19 POSIX 扩展)
+        LumenAI Shell 沙箱命令列表 (v0.3.19 POSIX 扩展)
         ------------------
         文件/目录:
           ls [-l|-a] [path]       列出文件

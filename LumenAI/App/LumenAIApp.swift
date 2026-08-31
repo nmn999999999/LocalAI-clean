@@ -2,7 +2,7 @@ import SwiftUI
 import Combine
 
 @main
-struct LocalAIApp: App {
+struct LumenAIApp: App {
     @StateObject private var modelManager = ModelManager.shared
     @StateObject private var llmService = LLMService()
     @StateObject private var chatStore = ChatStore()

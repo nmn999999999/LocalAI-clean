@@ -14,7 +14,7 @@ struct ChatView: View {
     @ObservedObject private var ttsService = TTSService.shared
     @ObservedObject private var asrService = ASRService.shared
     @ObservedObject private var personaStore = PersonaStore.shared
-    @EnvironmentObject private var theme: LocalAIApp.ThemeObserver
+    @EnvironmentObject private var theme: LumenAIApp.ThemeObserver
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityVoiceOverEnabled) private var voiceOverEnabled
 

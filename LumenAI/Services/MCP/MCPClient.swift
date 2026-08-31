@@ -81,7 +81,7 @@ enum MCPClient {
             params: [
                 "protocolVersion": protocolVersion,
                 "capabilities": [:],
-                "clientInfo": ["name": "LocalAI", "version": "1.0"],
+                "clientInfo": ["name": "LumenAI", "version": "1.0"],
             ]
         )
         // notifications/initialized 通知

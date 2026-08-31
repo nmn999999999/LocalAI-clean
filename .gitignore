@@ -42,3 +42,9 @@ ipa_stage*/
 build-repro/
 build-release*/
 tests/
+
+# 构建缓存 / 本地状态（勿提交）
+-empty-abi-descriptor/
+.local/
+.workbuddy/
+ipa_final/

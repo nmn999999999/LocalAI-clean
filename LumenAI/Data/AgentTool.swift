@@ -1444,7 +1444,7 @@ enum BuiltInTools {
         let timeout = (arguments["timeout"] as? NSNumber)?.doubleValue ?? 15
         var request = URLRequest(url: lower)
         request.timeoutInterval = timeout
-        request.setValue("LocalAI-Agent/0.3 (iOS Sandbox)", forHTTPHeaderField: "User-Agent")
+        request.setValue("LumenAI-Agent/0.3 (iOS Sandbox)", forHTTPHeaderField: "User-Agent")
         request.setValue("application/json, text/plain, */*", forHTTPHeaderField: "Accept")
 
         do {
