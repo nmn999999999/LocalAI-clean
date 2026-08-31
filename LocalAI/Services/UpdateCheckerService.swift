@@ -113,6 +113,8 @@ final class UpdateCheckerService: ObservableObject {
     }
 
     /// 从灰度索引解析对当前设备生效的版本。返回是否成功（网络/解析均成功）。
+    /// v0.3.44 修复：索引漏更新时稳定版会停滞（曾因索引停留在 0.3.41 导致 0.3.42/43 检测不到）。
+    /// 稳定版解析后与 GitHub releases/latest 交叉取较大者自愈；灰度版只认索引（灰度版不进 Release）。
     private func checkGrayIndex(optIn: Bool) async -> Bool {
         guard let url = URL(string: UpdatePolicy.indexURL) else { return false }
         var request = URLRequest(url: url)
@@ -129,17 +131,65 @@ final class UpdateCheckerService: ObservableObject {
                 return false
             }
             let resolved = UpdatePolicy.resolveAppUpdate(index, optInGray: optIn)
-            isGray = resolved.isGray
+
+            if resolved.isGray {
+                // 灰度版：只用索引（灰度版不在 GitHub Release，天然隔离）
+                isGray = true
+                grayPercent = index.gray?.enabled == true ? index.gray?.percent : nil
+                latestTag = resolved.version
+                latestName = "\(resolved.version)（灰度）"
+                releaseNotes = resolved.notes
+                releaseURL = nil
+                downloadURL = resolved.ipa
+                return true
+            }
+
+            // 稳定版：与 GitHub releases/latest 交叉取较大者（索引漏更时自愈）
+            isGray = false
             grayPercent = index.gray?.enabled == true ? index.gray?.percent : nil
             latestTag = resolved.version
-            latestName = resolved.isGray ? "\(resolved.version)（灰度）" : resolved.version
+            latestName = resolved.version
             releaseNotes = resolved.notes
-            releaseURL = resolved.isGray ? nil : URL(string: "https://github.com/nmn999999999/LocalAI-clean/releases/latest")
+            releaseURL = URL(string: "https://github.com/nmn999999999/LocalAI-clean/releases/latest")
             downloadURL = resolved.ipa
+            if let gh = await fetchGitHubLatest(),
+               Self.compare(Self.stripV(gh.tag), resolved.version) > 0 {
+                latestTag = gh.tag
+                latestName = gh.tag
+                releaseNotes = gh.notes
+                releaseURL = gh.url
+                downloadURL = gh.ipa
+            }
             return true
         } catch {
             return false
         }
+    }
+
+    /// 抓取 GitHub releases/latest（供回退与稳定版交叉自愈）
+    private func fetchGitHubLatest() async -> (tag: String, notes: String?, url: URL, ipa: URL?)? {
+        guard let url = URL(string: repoAPI) else { return nil }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 15
+        request.setValue("LocalAI-iOS/\(currentVersion)", forHTTPHeaderField: "User-Agent")
+        guard let (data, response) = try? await URLSession.shared.data(for: request),
+              let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode),
+              let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let tag = json["tag_name"] as? String
+        else { return nil }
+        let notes = json["body"] as? String
+        let html = (json["html_url"] as? String).flatMap { URL(string: $0) }
+        var ipa: URL?
+        if let assets = json["assets"] as? [[String: Any]] {
+            for asset in assets {
+                if ((asset["name"] as? String) ?? "").lowercased().hasSuffix(".ipa"),
+                   let browserURL = asset["browser_download_url"] as? String {
+                    ipa = URL(string: browserURL)
+                    break
+                }
+            }
+        }
+        return (tag, notes, html ?? url, ipa)
     }
 
     /// 去掉 tag 的 "v" 前缀
