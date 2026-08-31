@@ -8,8 +8,8 @@
       "author": "LocalAI",
       "minAppVersion": "0.3.36",
       "files": {
-        "manifest": "https://raw.githubusercontent.com/nmn999999999/LocalAI-clean/main/modules/string-tools/manifest.json",
-        "tools": "https://raw.githubusercontent.com/nmn999999999/LocalAI-clean/main/modules/string-tools/tools.js"
+        "manifest": "https://raw.githubusercontent.com/nmn999999999/LumenAI/main/modules/string-tools/manifest.json",
+        "tools": "https://raw.githubusercontent.com/nmn999999999/LumenAI/main/modules/string-tools/tools.js"
       }
     },
     {
@@ -23,8 +23,8 @@
         "network"
       ],
       "files": {
-        "manifest": "https://raw.githubusercontent.com/nmn999999999/LocalAI-clean/main/modules/weather/manifest.json",
-        "tools": "https://raw.githubusercontent.com/nmn999999999/LocalAI-clean/main/modules/weather/tools.js"
+        "manifest": "https://raw.githubusercontent.com/nmn999999999/LumenAI/main/modules/weather/manifest.json",
+        "tools": "https://raw.githubusercontent.com/nmn999999999/LumenAI/main/modules/weather/tools.js"
       }
     },
     {
@@ -35,8 +35,8 @@
       "author": "LocalAI",
       "minAppVersion": "0.3.37",
       "files": {
-        "manifest": "https://raw.githubusercontent.com/nmn999999999/LocalAI-clean/main/modules/datetime/manifest.json",
-        "tools": "https://raw.githubusercontent.com/nmn999999999/LocalAI-clean/main/modules/datetime/tools.js"
+        "manifest": "https://raw.githubusercontent.com/nmn999999999/LumenAI/main/modules/datetime/manifest.json",
+        "tools": "https://raw.githubusercontent.com/nmn999999999/LumenAI/main/modules/datetime/tools.js"
       }
     },
     {
@@ -50,8 +50,8 @@
         "network"
       ],
       "files": {
-        "manifest": "https://raw.githubusercontent.com/nmn999999999/LocalAI-clean/main/modules/fx/manifest.json",
-        "tools": "https://raw.githubusercontent.com/nmn999999999/LocalAI-clean/main/modules/fx/tools.js"
+        "manifest": "https://raw.githubusercontent.com/nmn999999999/LumenAI/main/modules/fx/manifest.json",
+        "tools": "https://raw.githubusercontent.com/nmn999999999/LumenAI/main/modules/fx/tools.js"
       }
     },
     {
@@ -62,8 +62,8 @@
       "author": "LocalAI",
       "minAppVersion": "0.3.38",
       "files": {
-        "manifest": "https://raw.githubusercontent.com/nmn999999999/LocalAI-clean/main/modules/json-tools/manifest.json",
-        "tools": "https://raw.githubusercontent.com/nmn999999999/LocalAI-clean/main/modules/json-tools/tools.js"
+        "manifest": "https://raw.githubusercontent.com/nmn999999999/LumenAI/main/modules/json-tools/manifest.json",
+        "tools": "https://raw.githubusercontent.com/nmn999999999/LumenAI/main/modules/json-tools/tools.js"
       }
     },
     {
@@ -74,8 +74,8 @@
       "author": "LocalAI",
       "minAppVersion": "0.3.38",
       "files": {
-        "manifest": "https://raw.githubusercontent.com/nmn999999999/LocalAI-clean/main/modules/color-tools/manifest.json",
-        "tools": "https://raw.githubusercontent.com/nmn999999999/LocalAI-clean/main/modules/color-tools/tools.js"
+        "manifest": "https://raw.githubusercontent.com/nmn999999999/LumenAI/main/modules/color-tools/manifest.json",
+        "tools": "https://raw.githubusercontent.com/nmn999999999/LumenAI/main/modules/color-tools/tools.js"
       }
     },
     {
@@ -86,8 +86,8 @@
       "author": "LocalAI",
       "minAppVersion": "0.3.38",
       "files": {
-        "manifest": "https://raw.githubusercontent.com/nmn999999999/LocalAI-clean/main/modules/random-tools/manifest.json",
-        "tools": "https://raw.githubusercontent.com/nmn999999999/LocalAI-clean/main/modules/random-tools/tools.js"
+        "manifest": "https://raw.githubusercontent.com/nmn999999999/LumenAI/main/modules/random-tools/manifest.json",
+        "tools": "https://raw.githubusercontent.com/nmn999999999/LumenAI/main/modules/random-tools/tools.js"
       }
     }
   ]

@@ -38,7 +38,7 @@ final class PluginManager: ObservableObject {
 
     private let modulesDir: URL
     /// 模块索引地址（GitHub raw；可换成自己的静态站点）
-    private let indexURL = "https://raw.githubusercontent.com/nmn999999999/LocalAI-clean/main/modules/index.json"
+    private let indexURL = "https://raw.githubusercontent.com/nmn999999999/LumenAI/main/modules/index.json"
 
     init() {
         let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]

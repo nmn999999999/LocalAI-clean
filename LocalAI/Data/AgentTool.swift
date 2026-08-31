@@ -122,7 +122,7 @@ enum BuiltInTools {
             name: "http_get",
             description: "发起 HTTP GET 请求抓取网页 / JSON API 内容(仅 https)。返回文本;若响应是 JSON 会自动美化。适合获取天气 API、GitHub API、新闻 RSS 等公开数据",
             parameters: [
-                "url": .init(type: "string", description: "完整 URL(https://...),如 https://api.github.com/repos/nmn999999999/LocalAI-clean/releases/latest", enumValues: nil),
+                "url": .init(type: "string", description: "完整 URL(https://...),如 https://api.github.com/repos/nmn999999999/LumenAI/releases/latest", enumValues: nil),
                 "timeout": .init(type: "number", description: "超时秒数(可选,默认 15)", enumValues: nil)
             ],
             requiresApproval: true,  // 网络请求会访问外部站点

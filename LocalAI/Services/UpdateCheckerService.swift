@@ -25,7 +25,7 @@ final class UpdateCheckerService: ObservableObject {
     /// 用户是否强制参与灰度（微信式内测开关）
     static let grayOptInKey = "update_gray_opt_in"
 
-    private let repoAPI = "https://api.github.com/repos/nmn999999999/LocalAI-clean/releases/latest"
+    private let repoAPI = "https://api.github.com/repos/nmn999999999/LumenAI/releases/latest"
     private let lastCheckKey = "update_last_check_ts"
     /// 自动检查最小间隔（秒）：1 天
     private let minInterval: TimeInterval = 86400
@@ -150,7 +150,7 @@ final class UpdateCheckerService: ObservableObject {
             latestTag = resolved.version
             latestName = resolved.version
             releaseNotes = resolved.notes
-            releaseURL = URL(string: "https://github.com/nmn999999999/LocalAI-clean/releases/latest")
+            releaseURL = URL(string: "https://github.com/nmn999999999/LumenAI/releases/latest")
             downloadURL = resolved.ipa
             if let gh = await fetchGitHubLatest(),
                Self.compare(Self.stripV(gh.tag), resolved.version) > 0 {

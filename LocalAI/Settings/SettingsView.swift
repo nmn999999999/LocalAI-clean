@@ -887,7 +887,7 @@ struct SettingsView: View {
                 infoRow("API 支持", "OpenAI / Gemini / Claude / 任意兼容端点")
                 infoRow("界面", "SwiftUI · Liquid Glass (iOS 26+)")
                 infoRow("隐私", "本地模式：全部推理在本机完成，无网络上传")
-                infoRow("项目", "原生 Swift 本地大模型客户端")
+                infoRow("项目", "LumenAI · 原生 Swift 本地大模型客户端")
             }
         }
     }

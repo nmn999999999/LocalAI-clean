@@ -38,7 +38,7 @@ struct ModuleGrayPolicy: Codable, Sendable {
 enum UpdatePolicy {
 
     /// 更新索引地址（仓库里；灰度版只出现在这里，不进 GitHub Release）
-    static let indexURL = "https://raw.githubusercontent.com/nmn999999999/LocalAI-clean/main/update/index.json"
+    static let indexURL = "https://raw.githubusercontent.com/nmn999999999/LumenAI/main/update/index.json"
 
     /// 设备分桶号（0-99，稳定）
     static func deviceBucket() -> Int {
