@@ -188,7 +188,12 @@ final class AgentService: ObservableObject {
             if iteration > Self.softIterationLimit { break }
 
             let iterationID = bridge?.beginIteration()
-            let promptMessages = withToolInstructions(history: Self.trimmedHistory(workingHistory), tools: toolsEnabledTools)
+            let smallModel = Self.isSmallModel(llm: llm, settings: settings)
+            let promptMessages = withToolInstructions(
+                history: Self.trimmedHistory(workingHistory),
+                tools: toolsEnabledTools,
+                smallModel: smallModel
+            )
 
             var raw = ""
             do {
@@ -357,12 +362,33 @@ final class AgentService: ObservableObject {
 
     // MARK: - 工具说明注入
 
+    /// 小模型判定：本地 ≤3B（或强制 simple 策略）→ 压缩工具目录，防止上下文占满引发解码失败
+    private static func isSmallModel(llm: LLMService, settings: ModelSettings) -> Bool {
+        let forced = PromptStrategy(rawValue: settings.promptStrategy) ?? .auto
+        switch forced {
+        case .simple: return true
+        case .off, .standard, .pro: return false
+        case .auto: break
+        }
+        guard let name = llm.loadedModelName else { return false }
+        if let scale = PromptStrategyResolver.parameterScale(from: name), scale <= 3.0 { return true }
+        return false
+    }
+
     private func withToolInstructions(
         history: [ChatMessage],
-        tools: [AgentToolDefinition]
+        tools: [AgentToolDefinition],
+        smallModel: Bool
     ) -> [ChatMessage] {
-        let catalog = tools.map { tool -> String in
-            var lines = "- \(tool.name): \(tool.description)"
+        // 小模型上下文优化（v0.3.43）：只注入前 12 个核心工具（计算器/搜索/日期等），
+        // 并截断长描述 —— 33 个工具全量注入会把 Qwen3 等小模型上下文占满
+        // （引发"生成解码失败"与指令漂移）。
+        let maxTools = smallModel ? 12 : tools.count
+        let maxDesc = 150
+        let catalog = tools.prefix(maxTools).map { tool -> String in
+            var desc = tool.description
+            if desc.count > maxDesc { desc = String(desc.prefix(maxDesc)) + "…" }
+            var lines = "- \(tool.name): \(desc)"
             if !tool.parameters.isEmpty {
                 let params = tool.parameters.map { name, schema -> String in
                     var s = "  - \(name) (\(schema.type))"

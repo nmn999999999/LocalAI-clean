@@ -260,6 +260,11 @@ static int generate(llama_bridge * b, int n_past_start, void (*cb)(const char *,
     std::vector<llama_token> gen;
     for (int i = 0; i < max_tokens; i++) {
         if (b->stop) break; // 用户点击停止
+        // 上下文护栏（v0.3.43）：预留 8 token 余量，接近 n_ctx 上限时提前收尾。
+        // 否则生成阶段 n_past 越界 → llama_decode 返回非零 → "生成解码失败"。
+        // Agent 模式注入超长工具目录后（小模型尤甚），提示词几乎占满上下文，
+        // 生成一两个 token 就溢出 —— 这是 Qwen3 小模型 Agent 模式解码失败的根因。
+        if (b->n_ctx > 0 && n_past >= b->n_ctx - 8) break;
         float * logits = llama_get_logits(b->ctx);
         llama_token token = sample_token(b, logits);
         if (llama_vocab_is_eog(b->vocab, token)) break;
