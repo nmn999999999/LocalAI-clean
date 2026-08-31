@@ -160,6 +160,18 @@ struct ChatView: View {
         llmService.isModelReady || providerStore.hasCloudSelection
     }
 
+    /// Agent 模式可用性（v0.3.45）：仅云端模型 或 ≥3B 本地模型可用。
+    /// 小模型（≤3B，如 Qwen3-0.6B / OpenELM-1.1B）指令遵循能力不足：
+    /// 长工具目录下会一直卡在思考、或输出乱码（OpenELM 实测）。
+    private var canUseAgentMode: Bool {
+        if providerStore.hasCloudSelection { return true }
+        guard let name = llmService.loadedModelName else { return false }
+        if let scale = PromptStrategyResolver.parameterScale(from: name) {
+            return scale > 3.0
+        }
+        return true   // 无法识别规模（自定义导入）：放行
+    }
+
     // MARK: - 消息列表
 
     private var messageList: some View {
@@ -356,7 +368,11 @@ struct ChatView: View {
                     .opacity(canChat ? 1 : 0.35)
 
                     Button {
-                        withAnimation(.bouncy) { isAgentMode.toggle() }
+                        if isAgentMode || canUseAgentMode {
+                            withAnimation(.bouncy) { isAgentMode.toggle() }
+                        } else {
+                            errorMessage = "Agent 模式仅支持云端模型或 ≥3B 的本地模型。当前小模型指令遵循能力不足（易卡思考/输出乱码），请切换云端模型或稍大本地模型。"
+                        }
                     } label: {
                         Image(systemName: isAgentMode ? "wand.and.stars" : "terminal")
                             .font(.system(size: 17, weight: .semibold))
@@ -637,6 +653,13 @@ struct ChatView: View {
         let effectiveSettings = effectiveSettings(from: settings, modelName: modelName, providerName: providerName)
 
         if isAgentMode {
+            // 小模型不支持 Agent：提示并按普通对话发送（v0.3.45）
+            guard canUseAgentMode else {
+                isAgentMode = false
+                errorMessage = "当前模型不支持 Agent 模式（需云端或 ≥3B 本地模型），已按普通对话发送。"
+                startGeneration(history: Array(conv.messages), settings: effectiveSettings, images: images.compactMap { $0.cgImage })
+                return
+            }
             // Agent 模式：人设提示词（助手/变量/人格）显式放入历史首条，
             // 避免被工具指令 system 消息顶掉（withToolInstructions 会追加到第一条 system）
             var agentHistory = Array(conv.messages)

@@ -188,11 +188,13 @@ final class AgentService: ObservableObject {
             if iteration > Self.softIterationLimit { break }
 
             let iterationID = bridge?.beginIteration()
-            let smallModel = Self.isSmallModel(llm: llm, settings: settings)
+            // 提示词分化（v0.3.45）：云端模型 → 全量工具目录 + 英文强化指令；
+            // 本地模型 → 压缩目录（12 工具 + 短描述）+ 中文指令。
+            let useCloud = llm.hasCloudSelection
             let promptMessages = withToolInstructions(
                 history: Self.trimmedHistory(workingHistory),
                 tools: toolsEnabledTools,
-                smallModel: smallModel
+                useCloud: useCloud
             )
 
             var raw = ""
@@ -362,29 +364,17 @@ final class AgentService: ObservableObject {
 
     // MARK: - 工具说明注入
 
-    /// 小模型判定：本地 ≤3B（或强制 simple 策略）→ 压缩工具目录，防止上下文占满引发解码失败
-    private static func isSmallModel(llm: LLMService, settings: ModelSettings) -> Bool {
-        let forced = PromptStrategy(rawValue: settings.promptStrategy) ?? .auto
-        switch forced {
-        case .simple: return true
-        case .off, .standard, .pro: return false
-        case .auto: break
-        }
-        guard let name = llm.loadedModelName else { return false }
-        if let scale = PromptStrategyResolver.parameterScale(from: name), scale <= 3.0 { return true }
-        return false
-    }
-
+    /// 提示词分化（v0.3.45）：
+    /// - 云端（useCloud=true）：完整工具目录 + 英文强化指令（GPT-4o/Claude/Gemini 对英文指令遵循更稳）
+    /// - 本地（useCloud=false）：压缩目录（前 12 个核心工具 + 描述截 150 字）+ 中文指令，
+    ///   防止 4B 级本地模型上下文被 33 个工具占满（解码失败/指令漂移）。
     private func withToolInstructions(
         history: [ChatMessage],
         tools: [AgentToolDefinition],
-        smallModel: Bool
+        useCloud: Bool
     ) -> [ChatMessage] {
-        // 小模型上下文优化（v0.3.43）：只注入前 12 个核心工具（计算器/搜索/日期等），
-        // 并截断长描述 —— 33 个工具全量注入会把 Qwen3 等小模型上下文占满
-        // （引发"生成解码失败"与指令漂移）。
-        let maxTools = smallModel ? 12 : tools.count
-        let maxDesc = 150
+        let maxTools = useCloud ? tools.count : 12
+        let maxDesc = useCloud ? Int.max : 150
         let catalog = tools.prefix(maxTools).map { tool -> String in
             var desc = tool.description
             if desc.count > maxDesc { desc = String(desc.prefix(maxDesc)) + "…" }
@@ -403,34 +393,65 @@ final class AgentService: ObservableObject {
             return lines
         }.joined(separator: "\n")
 
-        let instruction = """
-        ## 你能调用的工具
-        当需要调用工具时，只输出一个 JSON 对象，不要输出任何其他文字、解释或代码块：
+        let instruction: String
+        if useCloud {
+            instruction = """
+            ## Available Tools
+            When you need to call a tool, output ONLY a single JSON object. Do not output any other text, explanation, or code fences:
 
-        {"name": "<工具名>", "arguments": {"<参数名>": <值>, ...}}
+            {"name": "<tool_name>", "arguments": {"<arg>": <value>, ...}}
 
-        ## 调用规则
-        1. 一次最多调用一个工具；参数名必须与工具定义完全一致。
-        2. 数字参数直接写数值（如 5、3.14）；布尔写 true/false；其余一律写字符串。
-        3. 需要查数据/算数/操作时才调用工具；否则直接结束（见下方结束暗号）。
+            ## Rules
+            1. Call at most ONE tool per turn; argument names must exactly match the tool definitions.
+            2. Numbers as plain values (e.g. 5, 3.14); booleans as true/false; everything else as strings.
+            3. Call a tool only when you need data, calculation, or an operation; otherwise finish (see END SIGNAL below).
 
-        ## 多轮思考与执行
-        你可以连续多轮：每轮可以调用一个工具，也可以输出一段纯思考内容（不带暗号）——
-        系统会自动让你继续思考，你的思考会被保留。观察工具结果后再决定下一步。
+            ## Multi-round Thinking & Execution
+            You may take multiple turns: each turn you may call one tool, or output a pure thinking passage (without the end signal) — the system will let you continue and your thinking is preserved. Observe the tool results, then decide the next step.
 
-        ## 结束暗号（重要！）
-        当你已经收集到足够信息、准备给出最终回答时，必须先输出结束暗号：
+            ## END SIGNAL (IMPORTANT)
+            Once you have gathered enough information and are ready to give the final answer, you MUST first output the end signal:
 
-        \(Self.endSignal)
+            \(Self.endSignal)
 
-        然后紧接着输出最终回答正文（正常中文）。
-        暗号是循环结束的唯一信号：只要不输出暗号，系统就会认为你仍在思考并让你继续。
+            Then immediately output the final answer text, in the user's language.
+            The end signal is the ONLY signal to end the loop: as long as you do not output it, the system assumes you are still thinking and will continue.
 
-        ## 工具列表
-        \(catalog)
+            ## Tool List
+            \(catalog)
 
-        请开始。
-        """
+            Begin.
+            """
+        } else {
+            instruction = """
+            ## 你能调用的工具
+            当需要调用工具时，只输出一个 JSON 对象，不要输出任何其他文字、解释或代码块：
+
+            {"name": "<工具名>", "arguments": {"<参数名>": <值>, ...}}
+
+            ## 调用规则
+            1. 一次最多调用一个工具；参数名必须与工具定义完全一致。
+            2. 数字参数直接写数值（如 5、3.14）；布尔写 true/false；其余一律写字符串。
+            3. 需要查数据/算数/操作时才调用工具；否则直接结束（见下方结束暗号）。
+
+            ## 多轮思考与执行
+            你可以连续多轮：每轮可以调用一个工具，也可以输出一段纯思考内容（不带暗号）——
+            系统会自动让你继续思考，你的思考会被保留。观察工具结果后再决定下一步。
+
+            ## 结束暗号（重要！）
+            当你已经收集到足够信息、准备给出最终回答时，必须先输出结束暗号：
+
+            \(Self.endSignal)
+
+            然后紧接着输出最终回答正文（正常中文）。
+            暗号是循环结束的唯一信号：只要不输出暗号，系统就会认为你仍在思考并让你继续。
+
+            ## 工具列表
+            \(catalog)
+
+            请开始。
+            """
+        }
 
         var messages = history
         if let sysIdx = messages.firstIndex(where: { $0.role == .system }) {
