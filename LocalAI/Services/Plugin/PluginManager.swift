@@ -92,6 +92,27 @@ final class PluginManager: ObservableObject {
         }
     }
 
+    /// 读取模块存储（远程 UI 用）
+    func storageValue(module: InstalledModule, key: String) -> String? {
+        module.engine.storageGet(key)
+    }
+
+    /// 写入模块存储（远程 UI 用）
+    func setStorageValue(module: InstalledModule, key: String, value: String) {
+        module.engine.storageSet(key, value)
+    }
+
+    /// 清空模块存储（远程 UI 的 reset 动作）
+    func resetStorage(module: InstalledModule) {
+        let dir = module.directory
+        try? FileManager.default.removeItem(at: dir.appendingPathComponent("storage.json"))
+        if let reloaded = loadModule(at: dir) {
+            if let idx = modules.firstIndex(where: { $0.id == module.id }) {
+                modules[idx] = reloaded
+            }
+        }
+    }
+
     func remove(_ module: InstalledModule) {
         try? FileManager.default.removeItem(at: module.directory)
         modules.removeAll { $0.id == module.id }

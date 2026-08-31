@@ -1,8 +1,32 @@
 {
   "id": "random-tools",
   "name": "随机工具",
-  "version": "1.0.0",
-  "description": "强密码 / 掷骰子 / 抽签 / 随机数（纯计算）",
+  "version": "1.1.0",
+  "description": "强密码 / 掷骰子 / 抽签（纯计算）；支持远程设置默认密码长度",
   "author": "LocalAI",
-  "minAppVersion": "0.3.38"
+  "minAppVersion": "0.3.42",
+  "permissions": ["storage"],
+  "settingsUI": [
+    {
+      "id": "general",
+      "title": "随机工具设置",
+      "rows": [
+        {
+          "id": "pw_len",
+          "type": "text",
+          "title": "默认密码长度",
+          "subtitle": "js_password 不传 length 时使用（8-64）",
+          "key": "default_pw_len",
+          "defaultValue": "16"
+        },
+        {
+          "id": "reset",
+          "type": "button",
+          "title": "恢复默认设置",
+          "action": "reset",
+          "confirm": "确定清空本模块的本地设置？"
+        }
+      ]
+    }
+  ]
 }

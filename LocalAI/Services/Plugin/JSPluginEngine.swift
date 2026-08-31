@@ -355,6 +355,16 @@ final class JSPluginEngine: @unchecked Sendable {
 
     // MARK: - 存储
 
+    /// 读取模块本地存储（远程 UI 绑定用）
+    func storageGet(_ key: String) -> String? {
+        storage[key]
+    }
+
+    /// 写入模块本地存储（远程 UI 绑定用）
+    func storageSet(_ key: String, _ value: String) {
+        setStorage(key, value)
+    }
+
     private func setStorage(_ key: String, _ value: String) {
         storage[key] = value
         persistStorage()

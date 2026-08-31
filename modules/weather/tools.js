@@ -6,7 +6,7 @@ registerTool({
     city: { type: "string", description: "城市名，如 北京 / London" }
   },
   run: async function (args) {
-    var city = String(args.city || "").trim();
+    var city = String(args.city || "").trim() || String(storeGet('default_city') || "").trim();
     if (!city) return "请提供城市名";
     var url = "https://wttr.in/" + encodeURIComponent(city) + "?format=j1";
     var body = await nativeFetch(url);

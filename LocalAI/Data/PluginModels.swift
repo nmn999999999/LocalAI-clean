@@ -13,6 +13,8 @@ struct PluginManifest: Codable, Sendable {
     var minAppVersion: String?
     /// 声明的权限：["network"]（联网，需授权）/ ["storage"]（模块本地存储）
     var permissions: [String]
+    /// 远程设置界面（不换底包即可改变配置界面；JSON 声明式，App 渲染）
+    var settingsUI: [RemoteUIGroup]?
 
     init(
         id: String,
@@ -21,7 +23,8 @@ struct PluginManifest: Codable, Sendable {
         description: String,
         author: String? = nil,
         minAppVersion: String? = nil,
-        permissions: [String] = []
+        permissions: [String] = [],
+        settingsUI: [RemoteUIGroup]? = nil
     ) {
         self.id = id
         self.name = name
@@ -30,11 +33,12 @@ struct PluginManifest: Codable, Sendable {
         self.author = author
         self.minAppVersion = minAppVersion
         self.permissions = permissions
+        self.settingsUI = settingsUI
     }
 
     // 旧存档/旧清单没有 permissions → 默认 []
     enum CodingKeys: String, CodingKey {
-        case id, name, version, description, author, minAppVersion, permissions
+        case id, name, version, description, author, minAppVersion, permissions, settingsUI
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -45,6 +49,19 @@ struct PluginManifest: Codable, Sendable {
         author = try c.decodeIfPresent(String.self, forKey: .author)
         minAppVersion = try c.decodeIfPresent(String.self, forKey: .minAppVersion)
         permissions = try c.decodeIfPresent([String].self, forKey: .permissions) ?? []
+        settingsUI = try c.decodeIfPresent([RemoteUIGroup].self, forKey: .settingsUI)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(name, forKey: .name)
+        try c.encode(version, forKey: .version)
+        try c.encode(description, forKey: .description)
+        try c.encodeIfPresent(author, forKey: .author)
+        try c.encodeIfPresent(minAppVersion, forKey: .minAppVersion)
+        try c.encode(permissions, forKey: .permissions)
+        try c.encodeIfPresent(settingsUI, forKey: .settingsUI)
     }
 }
 

@@ -1,9 +1,31 @@
 {
   "id": "weather",
   "name": "天气查询",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "查询任意城市实时天气（wttr.in，需要联网）",
   "author": "LocalAI",
-  "minAppVersion": "0.3.37",
-  "permissions": ["network"]
+  "minAppVersion": "0.3.42",
+  "permissions": ["network", "storage"],
+  "settingsUI": [
+    {
+      "id": "weather",
+      "title": "天气设置",
+      "rows": [
+        {
+          "id": "city",
+          "type": "text",
+          "title": "默认城市",
+          "subtitle": "js_weather 不传 city 时使用",
+          "key": "default_city",
+          "defaultValue": "北京"
+        },
+        {
+          "id": "test",
+          "type": "button",
+          "title": "测试：查默认城市天气",
+          "action": "test:js_weather"
+        }
+      ]
+    }
+  ]
 }

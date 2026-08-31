@@ -7,7 +7,8 @@ registerTool({
     symbols: { type: "boolean", description: "是否包含符号，默认 true" }
   },
   run: function (args) {
-    var len = Math.max(8, Math.min(64, Number(args.length) || 16));
+    var defLen = Number(storeGet('default_pw_len')) || 16;
+    var len = Math.max(8, Math.min(64, Number(args.length) || defLen));
     var useSymbols = args.symbols !== false;
     var sets = ["abcdefghijkmnopqrstuvwxyz", "ABCDEFGHJKLMNPQRSTUVWXYZ", "23456789"];
     if (useSymbols) sets.push("!@#$%^&*()_+-=[]{};:,.<>?");

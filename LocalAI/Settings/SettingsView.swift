@@ -28,6 +28,7 @@ struct SettingsView: View {
                     updateCard
                     searchCard
                     sshCard
+                    moduleSettingsCard
                     aboutCard
                     dangerZone
                 }
@@ -850,6 +851,30 @@ struct SettingsView: View {
                 Text("供 Agent 的 ssh 工具使用：在对话中让 AI「在服务器上执行 xxx」即可。账号信息仅存于本机，私钥不会上传。工具参数可临时覆盖主机/端口/用户/命令。")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    // MARK: - 模块设置（远程 UI：插件下发的配置卡片，不换底包即可更新）
+
+    @ObservedObject private var pluginManager = PluginManager.shared
+
+    @ViewBuilder
+    private var moduleSettingsCard: some View {
+        let withUI = pluginManager.modules.filter { $0.manifest.settingsUI?.isEmpty == false }
+        if !withUI.isEmpty {
+            GlassCard {
+                VStack(alignment: .leading, spacing: 12) {
+                    SectionHeader(title: "模块设置", systemImage: "puzzlepiece.extension.fill")
+                    ForEach(withUI) { module in
+                        VStack(alignment: .leading, spacing: 10) {
+                            Label("\(module.manifest.name) · v\(module.manifest.version)", systemImage: "puzzlepiece.extension")
+                                .font(.subheadline.weight(.semibold))
+                            // 插件下发的远程 UI（JSON 声明式，改配置界面不用换底包）
+                            RemoteUIView(module: module, groups: module.manifest.settingsUI ?? [])
+                        }
+                    }
+                }
             }
         }
     }
